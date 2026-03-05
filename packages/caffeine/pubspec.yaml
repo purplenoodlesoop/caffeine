@@ -1,0 +1,27 @@
+name: caffeine
+description: >-
+  A reactive microstore for Dart with managed side effects. Pure update
+  functions, explicit effect streams, lazy derived state, and glitch-free
+  reactivity — inspired by The Elm Architecture (TEA).
+version: 1.0.0
+homepage: https://github.com/purplenoodlesoop/caffeine
+repository: https://github.com/purplenoodlesoop/caffeine
+issue_tracker: https://github.com/purplenoodlesoop/caffeine/issues
+
+topics:
+  - state-management
+  - reactive
+  - store
+  - elm
+
+environment:
+  sdk: ^3.11.1
+
+resolution: workspace
+
+dependencies:
+  meta: ^1.9.0
+
+dev_dependencies:
+  lints: ^6.0.0
+  test: ^1.25.6

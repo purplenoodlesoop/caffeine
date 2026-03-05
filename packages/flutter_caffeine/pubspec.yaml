@@ -1,0 +1,33 @@
+name: flutter_caffeine
+description: >-
+  Flutter bindings for caffeine. Attach reactive scopes to the widget tree,
+  read state with context.state(), and subscribe to automatic rebuilds —
+  no StreamBuilders, no dispose boilerplate.
+version: 1.0.0
+homepage: https://github.com/purplenoodlesoop/caffeine
+repository: https://github.com/purplenoodlesoop/caffeine
+issue_tracker: https://github.com/purplenoodlesoop/caffeine/issues
+
+topics:
+  - state-management
+  - reactive
+  - store
+  - flutter
+
+environment:
+  sdk: ^3.11.1
+  flutter: ">=1.17.0"
+
+resolution: workspace
+
+dependencies:
+  flutter:
+    sdk: flutter
+  caffeine: ^1.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:

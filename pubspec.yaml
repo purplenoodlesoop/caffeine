@@ -1,0 +1,8 @@
+name: caffeine_mono
+publish_to: none
+
+environment:
+  sdk: ^3.11.1
+
+workspace:
+  - packages/*
