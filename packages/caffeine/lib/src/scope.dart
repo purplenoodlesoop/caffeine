@@ -210,7 +210,15 @@ class _ScopeImpl implements Scope {
   // scope that is an ancestor-or-equal of this scope. This ensures that all
   // descendants reading the same derived store share one instance.
   void _promoteIfNeeded(Store store, _NodeEntry entry) {
-    if (entry.deps.isEmpty) return;
+    if (entry.deps.isEmpty) {
+      // Constant derived stores (no deps) live on root, like unbound accum stores.
+      if (this != _root) {
+        _entries.remove(store);
+        _root._entries[store] = entry;
+        entry.ownerScope = _root;
+      }
+      return;
+    }
 
     _ScopeImpl? best;
     int bestDepth = -1;
@@ -358,11 +366,7 @@ class _ScopeImpl implements Scope {
   @override
   void fire<T>(Event<T> event, T value) {
     final owner = _findEventOwner(event);
-    if (owner != null) {
-      owner._broadcastFire(event, value);
-    } else {
-      _localFire(event, value);
-    }
+    (owner ?? _root)._broadcastFire(event, value);
   }
 
   void _listenHandlerStream<S>(

@@ -10,13 +10,13 @@ final user = Store<User>.accum((ctx) {
 });
 
 final upperCasedFirstName =
-    Store<String>.derive((s) => s.read(user).firstName.toUpperCase());
+    Store<String>.derive((s) => user(s).firstName.toUpperCase());
 
 final upperCasedLastName =
-    Store<String>.derive((s) => s.read(user).lastName.toUpperCase());
+    Store<String>.derive((s) => user(s).lastName.toUpperCase());
 
 /// On [user] update, [upperCasedName] will update only once, compressing sync
 /// and pure [Store.derive] updates.
 final upperCasedName = Store<String>.derive(
-  (s) => '${s.read(upperCasedFirstName)} ${s.read(upperCasedLastName)}',
+  (s) => '${upperCasedFirstName(s)} ${upperCasedLastName(s)}',
 );

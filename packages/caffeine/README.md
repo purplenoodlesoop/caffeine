@@ -68,7 +68,7 @@ final scope = Scope();
 print(scope.read(counterStore));  // 0
 print(scope.read(doubledCount));  // 0
 
-scope.fire(increment, null);
+increment(scope, null);
 await Future.microtask(() {});
 
 print(scope.read(counterStore));  // 1
@@ -93,11 +93,11 @@ final loadUser   = Event<int>();    // carries a user ID
 
 `Event<T>` also implements `StoreOverride`, meaning events can be placed in scope `overrides` to control their routing. See [Event Binding](#event-binding--global-and-semi-global-events).
 
-The `EventSourceX` extension makes every `Event<T>` callable as a shorthand for `source.fire(event, value)`:
+The `EventSourceX` extension makes every `Event<T>` callable as a shorthand for `scope.fire(event, value)`:
 
 ```dart
-increment(scope, null);   // equivalent to scope.fire(increment, null)
-setName(scope, 'Alice');  // equivalent to scope.fire(setName, 'Alice')
+increment(scope, null);   // preferred — same as scope.fire(increment, null)
+setName(scope, 'Alice');  // preferred — same as scope.fire(setName, 'Alice')
 ```
 
 ---
@@ -136,23 +136,23 @@ final doubledCount = Store<int>.derive(
 );
 
 final userGreeting = Store<String>.derive(
-  (source) => 'Hello, ${source.read(userStore).name}!',
+  (source) => 'Hello, ${userStore(source).name}!',
 );
 ```
 
-The `source` parameter is a `StateSource`. Two equivalent ways to read a dependency:
+The `source` parameter is a `StateSource`. The `StateSourceX` extension makes every `Store<T>` callable as a shorthand:
 
 ```dart
 source.read(counterStore)   // explicit
-counterStore(source)        // shorthand via StateSourceX extension
+counterStore(source)        // preferred shorthand via StateSourceX extension
 ```
 
 Pass `listen: false` to read a value without registering a dependency:
 
 ```dart
 final snapshot = Store<String>.derive((source) {
-  final flag = source.read(flagStore);           // dependency: rebuilds when flag changes
-  final count = source.read(counter, listen: false); // no dependency: count changes don't trigger recompute
+  final flag = flagStore(source);                    // dependency: rebuilds when flag changes
+  final count = counter(source, listen: false).count; // no dependency: count changes don't trigger recompute
   return flag ? 'count is $count' : 'hidden';
 });
 ```
@@ -244,14 +244,14 @@ ctx.on(logEvent, (message) async* {
 
 ### Cross-Store Dispatch
 
-Call `ctx.fire(event, value)` inside a handler to dispatch events to other stores:
+Use the event shorthand to dispatch events to other stores from within a handler:
 
 ```dart
 final authStore = Store<AuthState>.accum((ctx) {
   ctx.on(signIn, (credentials) async* {
     yield const AuthState.loading();
     final token = await authService.signIn(credentials);
-    ctx.fire(analyticsEvent, 'user_signed_in');  // fires into the same scope
+    analyticsEvent(ctx, 'user_signed_in');
     yield AuthState.authenticated(token);
   });
   return const AuthState.unauthenticated();
@@ -271,7 +271,7 @@ final configStore = Store<Config>.accum((ctx) {
     yield config;
   });
 
-  ctx.fire(loadConfig, null);  // fires immediately on init
+  loadConfig(ctx, null);  // fires immediately on init
   return Config.empty();
 });
 ```
@@ -288,7 +288,7 @@ ctx.on(submit, (_) async* {
 
   try {
     final result = await api.submit(state.data);
-    ctx.fire(showSnackbar, 'Saved!');
+    showSnackbar(ctx, 'Saved!');
     yield state.copyWith(submitting: false, saved: true, result: result);
   } catch (e) {
     yield state.copyWith(submitting: false, error: e.toString());
@@ -302,15 +302,15 @@ ctx.on(submit, (_) async* {
 
 ### Dependency Tracking
 
-When a `Store.derive` body calls `source.read(dep)`, the runtime records `dep` as a dependency. From that point on, whenever `dep`'s value changes, the derived store is marked stale and recomputed on next read (or immediately if something is streaming it).
+When a `Store.derive` body reads a dependency via `dep(source)`, the runtime records `dep` as a dependency. From that point on, whenever `dep`'s value changes, the derived store is marked stale and recomputed on next read (or immediately if something is streaming it).
 
 Dependencies are recorded fresh on each evaluation, so conditional dependencies work correctly:
 
 ```dart
 final result = Store<String>.derive((source) {
-  final useA = source.read(flagStore);
+  final useA = flagStore(source);
   // Only one of storeA or storeB is a dependency at a time:
-  return useA ? source.read(storeA) : source.read(storeB);
+  return useA ? storeA(source) : storeB(source);
 });
 ```
 
@@ -323,12 +323,12 @@ When a shared dependency changes, all derived nodes that depend on it (directly 
 ```dart
 final user = Store<User>.accum(/* ... */);
 
-final firstName = Store<String>.derive((s) => s.read(user).firstName.toUpperCase());
-final lastName  = Store<String>.derive((s) => s.read(user).lastName.toUpperCase());
+final firstName = Store<String>.derive((s) => user(s).firstName.toUpperCase());
+final lastName  = Store<String>.derive((s) => user(s).lastName.toUpperCase());
 
 // When user changes, fullName recomputes exactly once — not twice.
 final fullName = Store<String>.derive(
-  (s) => '${s.read(firstName)} ${s.read(lastName)}',
+  (s) => '${firstName(s)} ${lastName(s)}',
 );
 ```
 
@@ -366,7 +366,7 @@ final root  = Scope();
 final child = root.fork(overrides: {counterStore});
 
 // counterStore lives in child, not root.
-child.fire(increment, null);
+increment(child, null);
 await Future.microtask(() {});
 
 child.dispose(); // counterStore is disposed here; root is unaffected.
@@ -391,26 +391,26 @@ root.dispose(); // disposes child, grand, and all their stores.
 
 ## Event Binding — Global and Semi-Global Events
 
-By default, `scope.fire(event, value)` fires only in the calling scope. To make an event **broadcast** through an entire scope subtree, bind it by passing it in a scope's `overrides`:
+By default, `scope.fire(event, value)` broadcasts from the **root scope**, reaching every handler in the tree — consistent with how unbound stores are globally accessible. Binding an event to a scope narrows the broadcast to that scope's subtree.
+
+**Binding to root** (explicit, equivalent to the default but documents intent):
 
 ```dart
 final resetAll = Event<void>();
 
-// Bind resetAll to the root scope — it will broadcast to all descendants.
 final root = Scope(overrides: {resetAll});
 
 final leftScope  = root.fork(overrides: {counterStore});
 final rightScope = root.fork(overrides: {counterStore});
 
-// Both counterStore instances handle resetAll because it broadcasts.
-root.fire(resetAll, null);
+resetAll(root, null);  // broadcasts to all descendants
 ```
 
-**Firing from a descendant** also routes to the owning scope and broadcasts:
+**Firing from a descendant** routes to the owning scope and broadcasts:
 
 ```dart
 final grandChild = leftScope.fork();
-grandChild.fire(resetAll, null);  // routes to root, broadcasts to all descendants
+resetAll(grandChild, null);  // routes to root, broadcasts to all descendants
 ```
 
 **Binding to an intermediate scope** makes the event semi-global — it broadcasts only within that scope's subtree:
@@ -420,7 +420,7 @@ final localReset = Event<void>();
 
 // localReset only broadcasts within leftScope and its children.
 final leftScope = root.fork(overrides: {counterStore, localReset});
-leftScope.fire(localReset, null);  // rightScope is unaffected
+localReset(leftScope, null);  // rightScope is unaffected
 ```
 
-**Unbound events** always fire locally only, preserving isolation between independent scope subtrees.
+**Unbound events** broadcast from root, so all scopes in the tree receive them.
