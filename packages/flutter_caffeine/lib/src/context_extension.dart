@@ -5,7 +5,7 @@ import 'package:flutter/widgets.dart';
 
 import 'widget.dart';
 
-// Per-element map of active subscriptions, keyed by the Stateful node.
+// Per-element map of active subscriptions, keyed by the Store node.
 // Expando holds entries weakly — when the element is GC'd, the entry
 // is automatically eligible for collection too.
 final _subscriptions = Expando<Map<Object, StreamSubscription>>('caffeine_subs');
@@ -24,7 +24,7 @@ extension CaffeineBuildContextX on BuildContext {
   /// no explicit `dispose` or wrapper widget required.
   ///
   /// Pass `listen: false` to perform a one-shot read without subscribing.
-  T state<T>(Stateful<T> node, {bool listen = true}) {
+  T state<T>(Store<T> node, {bool listen = true}) {
     final scope = Caffeine.of(this);
     if (!listen) return scope.read(node);
 
@@ -40,6 +40,6 @@ extension CaffeineBuildContextX on BuildContext {
     return scope.read(node);
   }
 
-  /// Fires [event] through the nearest [Caffeine] ancestor's scope.
-  void fire<E>(Event<E> event) => Caffeine.of(this).fire(event);
+  /// Fires [event] with [value] through the nearest [Caffeine] ancestor's scope.
+  void fire<T>(Event<T> event, T value) => Caffeine.of(this).fire(event, value);
 }

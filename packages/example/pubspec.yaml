@@ -30,6 +30,7 @@ dependencies:
     path: ../caffeine
   flutter_caffeine:
     path: ../flutter_caffeine
+  pure: ^1.0.0
 
 dev_dependencies:
   flutter_test:

@@ -1,14 +1,11 @@
-import 'package:meta/meta.dart';
+import 'override.dart';
 
-abstract interface class EventConsumer<E> {}
+class Event<T> implements StoreOverride {}
 
-@optionalTypeArgs
-class Event<E> {
-  final EventConsumer<E> consumer;
-  final E event;
-  Event(this.consumer, this.event);
+abstract interface class EventSource {
+  void fire<T>(Event<T> event, T value);
 }
 
-extension EventConsumerX<E> on EventConsumer<E> {
-  Event<E> call(E event) => Event(this, event);
+extension EventSourceX<T> on Event<T> {
+  void call(EventSource source, T value) => source.fire(this, value);
 }

@@ -2,27 +2,15 @@ import 'package:caffeine/caffeine.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_caffeine/flutter_caffeine.dart';
 
-// ── Counter store ─────────────────────────────────────────────────────────────
-
-sealed class CounterEvent {}
-
-class Increment extends CounterEvent {}
-
-final counterStore = Store<int, CounterEvent>(
-  (self) => (
-    () => (0, Stream.empty),
-    (event, state) => switch (event) {
-      Increment() => (state + 1, Stream.empty),
-    },
-  ),
-);
-
-final doubledCounterValue = Stateful<int>(($) => $(counterStore) * 2);
-
 // ── App ───────────────────────────────────────────────────────────────────────
 
 void main() {
-  runApp(Caffeine(scopeFactory: (context) => Scope(), child: const MyApp()));
+  runApp(
+    Caffeine(
+      scopeFactory: (context) => Scope(overrides: {resetAll}),
+      child: const MyApp(),
+    ),
+  );
 }
 
 class MyApp extends StatelessWidget {
@@ -69,7 +57,15 @@ class CounterScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Counters')),
+      appBar: AppBar(
+        title: const Text('Counters'),
+        actions: [
+          TextButton(
+            onPressed: () => context.fire(resetAll, null),
+            child: const Text('Reset All'),
+          ),
+        ],
+      ),
       body: const Row(
         children: [
           Expanded(child: CounterFeature(label: 'Left')),
@@ -80,6 +76,29 @@ class CounterScreen extends StatelessWidget {
     );
   }
 }
+
+// ── Counter store ─────────────────────────────────────────────────────────────
+
+final increment = Event<void>();
+final resetAll = Event<void>();
+
+final counterStore = Store<int>.accum((ctx) {
+  const initial = 0;
+
+  ctx
+    ..on(increment, (_) async* {
+      yield ctx.current + 1;
+    })
+    ..on(resetAll, (_) async* {
+      yield initial;
+    });
+
+  return initial;
+});
+
+final doubledCounterValue = Store<int>.derive(
+  (source) => counterStore(source) * 2,
+);
 
 // ── Counter feature ───────────────────────────────────────────────────────────
 
@@ -92,7 +111,7 @@ class CounterFeature extends StatelessWidget {
   Widget build(BuildContext context) {
     return Caffeine(
       scopeFactory: (context) =>
-          Caffeine.of(context).fork(references: {counterStore}),
+          Caffeine.of(context).fork(overrides: {counterStore}),
       child: Builder(
         builder: (context) {
           final count = context.state(counterStore);
@@ -113,7 +132,7 @@ class CounterFeature extends StatelessWidget {
               ),
               const SizedBox(height: 24),
               ElevatedButton(
-                onPressed: () => context.fire(counterStore(Increment())),
+                onPressed: () => context.fire(increment, null),
                 child: const Text('Increment'),
               ),
             ],

@@ -6,33 +6,31 @@ import 'package:flutter_test/flutter_test.dart';
 // ── Shared store helpers ───────────────────────────────────────────────────────
 
 typedef CounterState = ({int count});
+
+final increment = Event<void>();
+final decrement = Event<void>();
+final reset = Event<void>();
+
+Store<CounterState> makeCounter() => Store<CounterState>.accum((ctx) {
+      ctx.on(increment, (_) async* { yield (count: ctx.current.count + 1); });
+      ctx.on(decrement, (_) async* { yield (count: ctx.current.count - 1); });
+      ctx.on(reset, (_) async* { yield (count: 0); });
+      return (count: 0);
+    });
+
 typedef UserState = ({String firstName, String lastName});
 
-enum CounterEvent { increment, decrement, reset }
+final setUser = Event<UserState>();
 
-Store<CounterState, CounterEvent> makeCounter() =>
-    Store<CounterState, CounterEvent>(
-      (self) => (
-        () => ((count: 0), Stream.empty),
-        (event, state) => switch (event) {
-          CounterEvent.increment => ((count: state.count + 1), Stream.empty),
-          CounterEvent.decrement => ((count: state.count - 1), Stream.empty),
-          CounterEvent.reset => ((count: 0), Stream.empty),
-        },
-      ),
-    );
-
-Store<UserState, UserState> makeUserStore() => Store<UserState, UserState>(
-      (self) => (
-        () => ((firstName: 'John', lastName: 'Doe'), Stream.empty),
-        (event, state) => (event, Stream.empty),
-      ),
-    );
+Store<UserState> makeUserStore() => Store<UserState>.accum((ctx) {
+      ctx.on(setUser, (u) async* { yield u; });
+      return (firstName: 'John', lastName: 'Doe');
+    });
 
 // Renders state.count as plain text.
 class CounterText extends StatelessWidget {
   const CounterText(this.counter, {super.key, this.listen = true});
-  final Store<CounterState, CounterEvent> counter;
+  final Store<CounterState> counter;
   final bool listen;
 
   @override
@@ -116,7 +114,6 @@ void main() {
       final counter = makeCounter();
       final scope = Scope();
 
-      // Warm up the stream before mounting so the controller exists.
       bool streamDone = false;
       scope.stream(counter).listen(null, onDone: () => streamDone = true);
 
@@ -126,7 +123,6 @@ void main() {
       ));
       expect(streamDone, false);
 
-      // Remove the Caffeine widget — triggers _CaffeineState.dispose().
       await tester.pumpWidget(const SizedBox());
       expect(streamDone, true);
     });
@@ -141,10 +137,9 @@ void main() {
         child: CounterText(counter),
       ));
 
-      scope.fire(counter(CounterEvent.increment));
+      scope.fire(increment, null);
       await tester.pump();
 
-      // Scope still alive: read returns updated value.
       expect(scope.read(counter).count, 1);
     });
 
@@ -154,9 +149,11 @@ void main() {
       final childCounter = makeCounter();
 
       final parentScope = Scope();
-      final childScope = parentScope.fork(references: {childCounter});
+      final childScope = parentScope.fork(overrides: {childCounter});
 
-      parentScope.fire(parentCounter(CounterEvent.increment));
+      parentScope.read(parentCounter); // initialize before fire
+      parentScope.fire(increment, null);
+      await Future.microtask(() {});
 
       await tester.pumpWidget(Caffeine(
         scopeFactory: (_) => parentScope,
@@ -166,13 +163,11 @@ void main() {
         ),
       ));
 
-      // Remove inner Caffeine — childScope is disposed.
       await tester.pumpWidget(Caffeine(
         scopeFactory: (_) => parentScope,
         child: const SizedBox(),
       ));
 
-      // Parent scope and its store survive.
       expect(parentScope.read(parentCounter).count, 1);
     });
   });
@@ -192,9 +187,9 @@ void main() {
       expect(find.text('0'), findsOneWidget);
     });
 
-    testWidgets('returns initial Stateful value', (tester) async {
+    testWidgets('returns initial derived store value', (tester) async {
       final counter = makeCounter();
-      final doubled = Stateful(($) => $(counter).count * 2);
+      final doubled = Store<int>.derive((s) => s.read(counter).count * 2);
       final scope = Scope();
 
       await tester.pumpWidget(Caffeine(
@@ -212,8 +207,10 @@ void main() {
         (tester) async {
       final counter = makeCounter();
       final scope = Scope();
-      scope.fire(counter(CounterEvent.increment));
-      scope.fire(counter(CounterEvent.increment));
+      scope.read(counter); // initialize before fire
+      scope.fire(increment, null);
+      scope.fire(increment, null);
+      await Future.microtask(() {});
 
       await tester.pumpWidget(Caffeine(
         scopeFactory: (_) => scope,
@@ -237,18 +234,20 @@ void main() {
       ));
       expect(find.text('0'), findsOneWidget);
 
-      scope.fire(counter(CounterEvent.increment));
+      scope.fire(increment, null);
+      await Future.microtask(() {});
       await tester.pump();
       expect(find.text('1'), findsOneWidget);
 
-      scope.fire(counter(CounterEvent.increment));
+      scope.fire(increment, null);
+      await Future.microtask(() {});
       await tester.pump();
       expect(find.text('2'), findsOneWidget);
     });
 
-    testWidgets('listen:true rebuilds when Stateful changes', (tester) async {
+    testWidgets('listen:true rebuilds when derived Store changes', (tester) async {
       final counter = makeCounter();
-      final doubled = Stateful(($) => $(counter).count * 2);
+      final doubled = Store<int>.derive((s) => s.read(counter).count * 2);
       final scope = Scope();
 
       await tester.pumpWidget(Caffeine(
@@ -260,7 +259,8 @@ void main() {
       ));
       expect(find.text('0'), findsOneWidget);
 
-      scope.fire(counter(CounterEvent.increment));
+      scope.fire(increment, null);
+      await Future.microtask(() {});
       await tester.pump();
       expect(find.text('2'), findsOneWidget);
     });
@@ -282,11 +282,11 @@ void main() {
       ));
       expect(builds.length, 1);
 
-      scope.fire(counter(CounterEvent.increment));
-      scope.fire(counter(CounterEvent.increment));
+      scope.fire(increment, null);
+      scope.fire(increment, null);
       await tester.pump();
 
-      expect(builds.length, 1); // no extra rebuilds
+      expect(builds.length, 1);
     });
 
     testWidgets('widget does not rebuild when value is unchanged', (tester) async {
@@ -294,8 +294,8 @@ void main() {
       final scope = Scope();
       final builds = <int>[];
 
-      // isPositive stays false as long as count <= 0
-      final isPositive = Stateful(($) => $(counter).count > 0);
+      final isPositive =
+          Store<bool>.derive((s) => s.read(counter).count > 0);
 
       await tester.pumpWidget(Caffeine(
         scopeFactory: (_) => scope,
@@ -309,18 +309,18 @@ void main() {
       ));
       expect(builds.length, 1);
 
-      // reset while already 0 — isPositive stays false, no rebuild expected
-      scope.fire(counter(CounterEvent.reset));
+      scope.fire(reset, null);
+      await Future.microtask(() {});
       await tester.pump();
       expect(builds.length, 1);
 
-      // increment — isPositive flips to true, rebuild expected
-      scope.fire(counter(CounterEvent.increment));
+      scope.fire(increment, null);
+      await Future.microtask(() {});
       await tester.pump();
       expect(builds.length, 2);
 
-      // increment again — isPositive stays true, no rebuild expected
-      scope.fire(counter(CounterEvent.increment));
+      scope.fire(increment, null);
+      await Future.microtask(() {});
       await tester.pump();
       expect(builds.length, 2);
     });
@@ -342,14 +342,10 @@ void main() {
       ));
       expect(find.text('0,0'), findsOneWidget);
 
-      scope.fire(c1(CounterEvent.increment));
+      scope.fire(increment, null);
+      await Future.microtask(() {});
       await tester.pump();
-      expect(find.text('1,0'), findsOneWidget);
-
-      scope.fire(c2(CounterEvent.increment));
-      scope.fire(c2(CounterEvent.increment));
-      await tester.pump();
-      expect(find.text('1,2'), findsOneWidget);
+      expect(find.text('1,1'), findsOneWidget);
     });
   });
 
@@ -362,17 +358,16 @@ void main() {
       final scope = Scope();
       final builds = <int>[];
 
-      // Trigger external rebuilds via a key.
       final notifier = ValueNotifier(0);
 
       await tester.pumpWidget(ValueListenableBuilder(
         valueListenable: notifier,
-        builder: (_, __, ___) => Caffeine(
+        builder: (_, a, b) => Caffeine(
           scopeFactory: (_) => scope,
           child: BuildCounter(
             counter: builds,
             builder: (ctx) {
-              ctx.state(counter); // subscribe each build
+              ctx.state(counter);
               return const SizedBox();
             },
           ),
@@ -380,17 +375,16 @@ void main() {
       ));
       expect(builds.length, 1);
 
-      // Force two extra rebuilds unrelated to counter
       notifier.value++;
       await tester.pump();
       notifier.value++;
       await tester.pump();
-      expect(builds.length, 3); // rebuilt 3 times total
+      expect(builds.length, 3);
 
       builds.clear();
 
-      // Now fire counter — should cause exactly 1 more rebuild, not 3+
-      scope.fire(counter(CounterEvent.increment));
+      scope.fire(increment, null);
+      await Future.microtask(() {});
       await tester.pump();
       expect(builds.length, 1);
     });
@@ -402,9 +396,13 @@ void main() {
     testWidgets('widget rebuilds exactly once when diamond upstream changes',
         (tester) async {
       final user = makeUserStore();
-      final upper1 = Stateful(($) => $(user).firstName.toUpperCase());
-      final upper2 = Stateful(($) => $(user).lastName.toUpperCase());
-      final combined = Stateful(($) => '${$(upper1)} ${$(upper2)}');
+      final upper1 =
+          Store<String>.derive((s) => s.read(user).firstName.toUpperCase());
+      final upper2 =
+          Store<String>.derive((s) => s.read(user).lastName.toUpperCase());
+      final combined = Store<String>.derive(
+        (s) => '${s.read(upper1)} ${s.read(upper2)}',
+      );
 
       final scope = Scope();
       final builds = <int>[];
@@ -421,7 +419,8 @@ void main() {
       ));
       builds.clear();
 
-      scope.fire(user((firstName: 'Jane', lastName: 'Smith')));
+      scope.fire(setUser, (firstName: 'Jane', lastName: 'Smith'));
+      await Future.microtask(() {});
       await tester.pump();
 
       expect(builds.length, 1);
@@ -430,9 +429,13 @@ void main() {
     testWidgets('diamond: widget reads correct combined value after update',
         (tester) async {
       final user = makeUserStore();
-      final upper1 = Stateful(($) => $(user).firstName.toUpperCase());
-      final upper2 = Stateful(($) => $(user).lastName.toUpperCase());
-      final combined = Stateful(($) => '${$(upper1)} ${$(upper2)}');
+      final upper1 =
+          Store<String>.derive((s) => s.read(user).firstName.toUpperCase());
+      final upper2 =
+          Store<String>.derive((s) => s.read(user).lastName.toUpperCase());
+      final combined = Store<String>.derive(
+        (s) => '${s.read(upper1)} ${s.read(upper2)}',
+      );
 
       final scope = Scope();
 
@@ -445,7 +448,8 @@ void main() {
       ));
       expect(find.text('JOHN DOE'), findsOneWidget);
 
-      scope.fire(user((firstName: 'Jane', lastName: 'Smith')));
+      scope.fire(setUser, (firstName: 'Jane', lastName: 'Smith'));
+      await Future.microtask(() {});
       await tester.pump();
       expect(find.text('JANE SMITH'), findsOneWidget);
     });
@@ -453,9 +457,13 @@ void main() {
     testWidgets('subscribing to multiple diamond nodes still rebuilds once',
         (tester) async {
       final user = makeUserStore();
-      final upper1 = Stateful(($) => $(user).firstName.toUpperCase());
-      final upper2 = Stateful(($) => $(user).lastName.toUpperCase());
-      final combined = Stateful(($) => '${$(upper1)} ${$(upper2)}');
+      final upper1 =
+          Store<String>.derive((s) => s.read(user).firstName.toUpperCase());
+      final upper2 =
+          Store<String>.derive((s) => s.read(user).lastName.toUpperCase());
+      final combined = Store<String>.derive(
+        (s) => '${s.read(upper1)} ${s.read(upper2)}',
+      );
 
       final scope = Scope();
       final builds = <int>[];
@@ -465,7 +473,6 @@ void main() {
         child: BuildCounter(
           counter: builds,
           builder: (ctx) {
-            // Subscribe to all three layers of the diamond
             ctx.state(upper1);
             ctx.state(upper2);
             ctx.state(combined);
@@ -475,35 +482,36 @@ void main() {
       ));
       builds.clear();
 
-      scope.fire(user((firstName: 'Jane', lastName: 'Smith')));
+      scope.fire(setUser, (firstName: 'Jane', lastName: 'Smith'));
+      await Future.microtask(() {});
       await tester.pump();
 
-      // markNeedsBuild is a no-op on an already-dirty element,
-      // so even with 3 subscriptions there is only 1 rebuild.
       expect(builds.length, 1);
     });
   });
 
-  // ── 7. StoreOverride ──────────────────────────────────────────────────────
+  // ── 7. MappingStoreOverride ───────────────────────────────────────────────
 
-  group('StoreOverride', () {
+  group('MappingStoreOverride', () {
     testWidgets('override in scope is transparent to context.state',
         (tester) async {
       final real = makeCounter();
       final fake = makeCounter();
 
-      final scope = Scope(references: {StoreOverride(real, fake)});
+      final scope = Scope(
+        overrides: {MappingStoreOverride(from: real, to: fake)},
+      );
 
-      // Fire into fake directly
-      scope.fire(real(CounterEvent.increment));
-      scope.fire(real(CounterEvent.increment));
+      scope.read(real); // initialize (resolves to fake)
+      scope.fire(increment, null);
+      scope.fire(increment, null);
+      await Future.microtask(() {});
 
       await tester.pumpWidget(Caffeine(
         scopeFactory: (_) => scope,
         child: CounterText(real),
       ));
 
-      // Widget reads `real` but sees fake's state (2)
       expect(find.text('2'), findsOneWidget);
     });
 
@@ -512,11 +520,17 @@ void main() {
       final fake = makeCounter();
 
       final parent = Scope();
-      parent.fire(real(CounterEvent.increment)); // real → 1
+      parent.read(real); // initialize real in parent
+      parent.fire(increment, null);
+      await Future.microtask(() {});
 
-      final child = parent.fork(references: {StoreOverride(real, fake)});
-      child.fire(real(CounterEvent.increment)); // fake → 1
-      child.fire(real(CounterEvent.increment)); // fake → 2
+      final child = parent.fork(
+        overrides: {MappingStoreOverride(from: real, to: fake)},
+      );
+      child.read(real); // initialize fake (resolved via override) in child
+      child.fire(increment, null);
+      child.fire(increment, null);
+      await Future.microtask(() {});
 
       String? parentRead, childRead;
 
@@ -534,8 +548,8 @@ void main() {
         }),
       ));
 
-      expect(parentRead, '1'); // sees real
-      expect(childRead, '2'); // sees fake
+      expect(parentRead, '1');
+      expect(childRead, '2');
     });
 
     testWidgets('context.state rebuilds correctly when override store changes',
@@ -543,7 +557,9 @@ void main() {
       final real = makeCounter();
       final fake = makeCounter();
 
-      final scope = Scope(references: {StoreOverride(real, fake)});
+      final scope = Scope(
+        overrides: {MappingStoreOverride(from: real, to: fake)},
+      );
 
       await tester.pumpWidget(Caffeine(
         scopeFactory: (_) => scope,
@@ -551,7 +567,8 @@ void main() {
       ));
       expect(find.text('0'), findsOneWidget);
 
-      scope.fire(real(CounterEvent.increment));
+      scope.fire(increment, null);
+      await Future.microtask(() {});
       await tester.pump();
       expect(find.text('1'), findsOneWidget);
     });
@@ -565,11 +582,14 @@ void main() {
       final local = makeCounter();
 
       final parentScope = Scope();
-      final childScope = parentScope.fork(references: {local});
+      final childScope = parentScope.fork(overrides: {local});
 
-      parentScope.fire(shared(CounterEvent.increment)); // shared → 1
-      childScope.fire(local(CounterEvent.increment)); // local → 1
-      childScope.fire(local(CounterEvent.increment)); // local → 2
+      parentScope.read(shared); // initialize
+      childScope.read(local);   // initialize
+      parentScope.fire(increment, null);
+      childScope.fire(increment, null);
+      childScope.fire(increment, null);
+      await Future.microtask(() {});
 
       await tester.pumpWidget(Caffeine(
         scopeFactory: (_) => parentScope,
@@ -582,9 +602,8 @@ void main() {
         ]),
       ));
 
-      // Both counters are readable from their respective scopes.
-      expect(find.text('1'), findsOneWidget); // shared
-      expect(find.text('2'), findsOneWidget); // local
+      expect(find.text('1'), findsOneWidget);
+      expect(find.text('2'), findsOneWidget);
     });
 
     testWidgets(
@@ -594,7 +613,7 @@ void main() {
       final local = makeCounter();
 
       final parentScope = Scope();
-      final childScope = parentScope.fork(references: {local});
+      final childScope = parentScope.fork(overrides: {local});
 
       final outerBuilds = <int>[];
       final innerBuilds = <int>[];
@@ -624,11 +643,12 @@ void main() {
       outerBuilds.clear();
       innerBuilds.clear();
 
-      childScope.fire(local(CounterEvent.increment));
+      childScope.fire(increment, null);
+      await Future.microtask(() {});
       await tester.pump();
 
-      expect(innerBuilds.length, 1); // inner rebuilt
-      expect(outerBuilds.length, 0); // outer untouched
+      expect(innerBuilds.length, 1);
+      expect(outerBuilds.length, 0);
     });
 
     testWidgets('parent scope store changes trigger rebuild only in outer widget',
@@ -637,7 +657,7 @@ void main() {
       final local = makeCounter();
 
       final parentScope = Scope();
-      final childScope = parentScope.fork(references: {local});
+      final childScope = parentScope.fork(overrides: {local});
 
       final outerBuilds = <int>[];
       final innerBuilds = <int>[];
@@ -667,18 +687,19 @@ void main() {
       outerBuilds.clear();
       innerBuilds.clear();
 
-      parentScope.fire(shared(CounterEvent.increment));
+      parentScope.fire(increment, null);
+      await Future.microtask(() {});
       await tester.pump();
 
-      expect(outerBuilds.length, 1); // outer rebuilt
-      expect(innerBuilds.length, 0); // inner untouched
+      expect(outerBuilds.length, 1);
+      expect(innerBuilds.length, 0);
     });
   });
 
   // ── 9. Firing events from widgets ────────────────────────────────────────
 
   group('Firing events from widget callbacks', () {
-    testWidgets('fire via Caffeine.of(context) updates state and triggers rebuild',
+    testWidgets('fire via context.fire updates state and triggers rebuild',
         (tester) async {
       final counter = makeCounter();
       final scope = Scope();
@@ -688,7 +709,7 @@ void main() {
         child: Builder(builder: (ctx) {
           final s = ctx.state(counter);
           return GestureDetector(
-            onTap: () => Caffeine.of(ctx).fire(counter(CounterEvent.increment)),
+            onTap: () => ctx.fire(increment, null),
             child: Text('${s.count}', textDirection: TextDirection.ltr),
           );
         }),
@@ -722,11 +743,12 @@ void main() {
         }),
       ));
 
-      scope.fire(counter(CounterEvent.increment));
-      scope.fire(counter(CounterEvent.increment));
-      scope.fire(counter(CounterEvent.increment));
+      scope.read(counter); // initialize before firing
+      scope.fire(increment, null);
+      scope.fire(increment, null);
+      scope.fire(increment, null);
+      await Future.microtask(() {});
 
-      // Invoke the callback directly — avoids hit-test issues with a zero-sized SizedBox.
       tester.widget<GestureDetector>(find.byType(GestureDetector)).onTap!();
       expect(tappedCount, 3);
     });
@@ -737,22 +759,18 @@ void main() {
   group('Async effects', () {
     testWidgets('effect dispatched from store update is reflected in UI',
         (tester) async {
-      final store = Store<String, String>(
-        (self) => (
-          () => ('idle', Stream.empty),
-          (event, state) => switch (event) {
-            'start' => (
-                'loading',
-                () async* {
-                  await Future.delayed(const Duration(milliseconds: 10));
-                  yield self('done');
-                },
-              ),
-            'done' => ('done', Stream.empty),
-            _ => (state, Stream.empty),
-          },
-        ),
-      );
+      final start = Event<void>();
+      final done = Event<void>();
+
+      final store = Store<String>.accum((ctx) {
+        ctx.on(start, (_) async* {
+          yield 'loading';
+          await Future.delayed(const Duration(milliseconds: 10));
+          ctx.fire(done, null);
+        });
+        ctx.on(done, (_) async* { yield 'done'; });
+        return 'idle';
+      });
 
       final scope = Scope();
 
@@ -765,7 +783,8 @@ void main() {
       ));
       expect(find.text('idle'), findsOneWidget);
 
-      scope.fire(store('start'));
+      scope.fire(start, null);
+      await Future.microtask(() {});
       await tester.pump();
       expect(find.text('loading'), findsOneWidget);
 
@@ -775,20 +794,13 @@ void main() {
 
     testWidgets('initial effect fires and updates UI after store init',
         (tester) async {
-      final store = Store<int, String>(
-        (self) => (
-          () => (
-            0,
-            () async* {
-              yield self('increment');
-            },
-          ),
-          (event, state) => switch (event) {
-            'increment' => (state + 1, Stream.empty),
-            _ => (state, Stream.empty),
-          },
-        ),
-      );
+      final doIncrement = Event<void>();
+
+      final store = Store<int>.accum((ctx) {
+        ctx.on(doIncrement, (_) async* { yield ctx.current + 1; });
+        ctx.fire(doIncrement, null);
+        return 0;
+      });
 
       final scope = Scope();
 
@@ -800,7 +812,7 @@ void main() {
         }),
       ));
 
-      await tester.pump(); // let microtask run
+      await tester.pump();
       expect(find.text('1'), findsOneWidget);
     });
   });

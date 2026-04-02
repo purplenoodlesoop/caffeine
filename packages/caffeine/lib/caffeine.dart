@@ -1,9 +1,15 @@
 library;
 
+export 'src/override.dart';
 export 'src/event.dart';
-export 'src/types.dart';
-export 'src/store_reference.dart';
-export 'src/stateful.dart' show Snapshot, Stateful;
-export 'src/store.dart' show Store;
-export 'src/store_override.dart';
+export 'src/store.dart'
+    show
+        Store,
+        MappingStoreOverride,
+        StateSource,
+        StateSourceX,
+        StoreState,
+        StoreAcc,
+        DerivedStoreBody,
+        AccumStoreBody;
 export 'src/scope.dart' show Scope;

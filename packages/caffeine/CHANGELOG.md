@@ -1,3 +1,9 @@
+## 2.0.0
+
+- **Event binding**: passing an `Event<T>` in scope `overrides` binds it to that scope; `fire()` from the owning scope or any descendant broadcasts through the entire subtree, enabling global and semi-global event routing
+- **Automatic scope promotion**: derived stores are now placed in the deepest scope that owns their dependencies rather than the requesting scope, so all reads within a subtree share one instance
+- `Event<T>` now implements `StoreOverride` (extracted to `override.dart` to avoid circular imports)
+
 ## 1.0.0
 
 Initial release.

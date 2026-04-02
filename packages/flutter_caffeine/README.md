@@ -1,21 +1,19 @@
 # flutter_caffeine
 
-Flutter bindings for [caffeine](https://pub.dev/packages/caffeine) — a reactive microstore with managed side effects. `flutter_caffeine` attaches caffeine scopes to the widget tree and wires `Stateful` subscriptions directly into `BuildContext`, with no `StreamBuilder`s, no `dispose` overrides, and no boilerplate wrapper widgets.
+Flutter bindings for [caffeine](https://pub.dev/packages/caffeine). Attaches reactive scopes to the widget tree and exposes state reads and event dispatch directly on `BuildContext` — no `StreamBuilder`s, no `dispose` overrides, no wrapper widgets.
 
 ---
 
 ## Table of Contents
 
 - [Installation](#installation)
-- [How It Works](#how-it-works)
 - [The Caffeine Widget](#the-caffeine-widget)
   - [Root Scope Setup](#root-scope-setup)
-  - [Forking into a Child Scope](#forking-into-a-child-scope)
+  - [Forking a Child Scope](#forking-a-child-scope)
 - [Reading State in Widgets](#reading-state-in-widgets)
   - [context.state() — Subscribe and Rebuild](#contextstate--subscribe-and-rebuild)
   - [listen: false — One-Time Read](#listen-false--one-time-read)
 - [Firing Events](#firing-events)
-  - [context.fire() — Dispatch an Event](#contextfire--dispatch-an-event)
 - [Dependency Injection and Testing](#dependency-injection-and-testing)
 
 ---
@@ -24,8 +22,8 @@ Flutter bindings for [caffeine](https://pub.dev/packages/caffeine) — a reactiv
 
 ```yaml
 dependencies:
-  caffeine: ^1.0.0
-  flutter_caffeine: ^0.0.1
+  caffeine: ^2.0.0
+  flutter_caffeine: ^1.0.0
 ```
 
 ```dart
@@ -35,78 +33,59 @@ import 'package:flutter_caffeine/flutter_caffeine.dart';
 
 ---
 
-## How It Works
-
-`flutter_caffeine` has two building blocks:
-
-- **`Caffeine`** — a widget that creates and attaches a caffeine `Scope` to a point in the element tree, making it available to all descendant widgets. The scope is created once in `initState` via a `scopeFactory` callback and disposed automatically when the element leaves the tree.
-- **`context.state(node)`** — a `BuildContext` extension that reads a `Stateful` or `Store` value from the nearest `Caffeine` ancestor. When `listen: true` (the default), the widget rebuilds automatically whenever the value changes. Subscriptions are cleaned up via a `Finalizer` on the context — no dispose logic, no leaks.
-- **`context.fire(event)`** — a `BuildContext` extension that dispatches an event through the nearest `Caffeine` ancestor's scope.
-
----
-
 ## The Caffeine Widget
+
+`Caffeine` creates a caffeine `Scope` and attaches it to a point in the element tree. The scope is created once (in `initState`) via the `scopeFactory` callback and disposed automatically when the element is removed from the tree.
 
 ### Root Scope Setup
 
-Place a `Caffeine` widget near the root of your app to create the root scope. The `scopeFactory` callback receives the `BuildContext` (useful for forking — see below) and returns the `Scope` to attach:
+Place a `Caffeine` widget near the root of your app to create the root scope:
 
 ```dart
 void main() {
   runApp(
     Caffeine(
       scopeFactory: (_) => Scope(),
-      child: MyApp(),
+      child: const MyApp(),
     ),
   );
 }
 ```
 
-To apply global `StoreOverride`s for dependency injection, pass them when constructing the scope:
+Pass `overrides` to inject stores or bind global events:
 
 ```dart
 Caffeine(
-  scopeFactory: (_) => Scope(references: {
-    StoreOverride(analyticsStore, productionAnalyticsStore),
+  scopeFactory: (_) => Scope(overrides: {
+    MappingStoreOverride(from: apiStore, to: productionApiStore),
+    globalSaveEvent,  // bound here — fires broadcast to all descendants
   }),
-  child: MyApp(),
+  child: const MyApp(),
 )
 ```
 
-### Forking into a Child Scope
+### Forking a Child Scope
 
-Use `Caffeine.of(context)` inside `scopeFactory` to fork a child scope from the parent. Stores bound to the child scope live only as long as the `Caffeine` widget:
+Use `Caffeine.of(context)` inside `scopeFactory` to fork a child scope. Stores bound to the child live only as long as that `Caffeine` widget:
 
 ```dart
-// Wraps a screen — screenStore is disposed when the screen leaves the tree
+// screenStore is disposed when this widget leaves the tree.
 Caffeine(
-  scopeFactory: (context) => Caffeine.of(context).fork(references: {
+  scopeFactory: (context) => Caffeine.of(context).fork(overrides: {
     screenStore,
   }),
-  child: ScreenWidget(),
-)
-```
-
-Because `scopeFactory` receives the `BuildContext` at `initState` time, it can traverse any number of ancestor scopes before forking:
-
-```dart
-Caffeine(
-  scopeFactory: (context) => Caffeine.of(context).fork(references: {
-    modalStore,
-    StoreOverride(authStore, guestAuthStore),
-  }),
-  child: ModalContent(),
+  child: const ScreenWidget(),
 )
 ```
 
 Typical scope structure in a Flutter app:
 
 ```
-Caffeine (root)      ─── overrides only, app lifetime
+Caffeine (root)        ─── global overrides, app lifetime
     │
-    ├── Caffeine     ─── homeStore, home screen lifetime
+    ├── Caffeine       ─── homeStore, home screen lifetime
     │
-    └── Caffeine     ─── profileStore, avatarStore, profile screen lifetime
+    └── Caffeine       ─── profileStore, profile screen lifetime
             │
             └── Caffeine  ─── editFormStore, edit modal lifetime
 ```
@@ -117,37 +96,33 @@ Caffeine (root)      ─── overrides only, app lifetime
 
 ### context.state() — Subscribe and Rebuild
 
-Call `context.state(node)` inside `build` to read a `Stateful` or `Store` value. With `listen: true` (the default), the widget rebuilds whenever the value changes:
+Call `context.state(store)` inside `build`. When `listen: true` (the default), the widget rebuilds automatically whenever the store's value changes:
 
 ```dart
 class CounterDisplay extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    final state = context.state(counter);
-    return Text('${state.count}');
+    final count = context.state(counterStore);
+    return Text('$count');
   }
 }
 ```
 
-Subscriptions are established once per node per element and deduplicated across rebuilds. Cleanup happens via a `Finalizer` registered on the `BuildContext` — when the element leaves the tree and is garbage collected, the finalizer fires and cancels the subscription automatically.
-
-You can read multiple nodes in one `build`. Each call independently subscribes:
+You can read multiple stores in a single `build`. Each call subscribes independently:
 
 ```dart
 Widget build(BuildContext context) {
   final user    = context.state(userStore);
-  final config  = context.state(remoteConfig);
-  final summary = context.state(systemState); // Stateful combining both
+  final doubled = context.state(doubledCounterValue);
 
   return Column(children: [
-    Text(user.firstName),
-    Text(config.apiUrl),
-    Text('${summary.doubledMessages} messages'),
+    Text(user.name),
+    Text('$doubled'),
   ]);
 }
 ```
 
-Because caffeine compresses diamond updates, `systemState` triggers at most one rebuild per event cycle even when both of its upstream stores change simultaneously.
+Subscriptions are established once per store per element and deduplicated across rebuilds. Cleanup happens via a `Finalizer` on the element — when it leaves the tree and is garbage collected, subscriptions cancel automatically. No `dispose` overrides needed.
 
 ### listen: false — One-Time Read
 
@@ -157,10 +132,10 @@ Pass `listen: false` to read a value without subscribing. The widget will not re
 Widget build(BuildContext context) {
   return ElevatedButton(
     onPressed: () {
-      final current = context.state(counter, listen: false);
-      print('Tapped with count: ${current.count}');
+      final count = context.state(counterStore, listen: false);
+      print('Current count: $count');
     },
-    child: const Text('Log count'),
+    child: const Text('Log'),
   );
 }
 ```
@@ -169,9 +144,7 @@ Widget build(BuildContext context) {
 
 ## Firing Events
 
-### context.fire() — Dispatch an Event
-
-Call `context.fire(event)` to dispatch an event to its target store through the nearest `Caffeine` ancestor's scope:
+Call `context.fire(event, value)` to dispatch an event through the nearest `Caffeine` ancestor's scope:
 
 ```dart
 class CounterButtons extends StatelessWidget {
@@ -179,11 +152,11 @@ class CounterButtons extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(children: [
       IconButton(
-        onPressed: () => context.fire(counter(CounterEvent.increment)),
+        onPressed: () => context.fire(increment, null),
         icon: const Icon(Icons.add),
       ),
       IconButton(
-        onPressed: () => context.fire(counter(CounterEvent.decrement)),
+        onPressed: () => context.fire(decrement, null),
         icon: const Icon(Icons.remove),
       ),
     ]);
@@ -191,22 +164,45 @@ class CounterButtons extends StatelessWidget {
 }
 ```
 
+If the event is bound to an ancestor scope, the fire automatically routes there and broadcasts through the subtree — no extra wiring needed.
+
 ---
 
 ## Dependency Injection and Testing
 
-`StoreOverride` replaces one store with another within the scope's subtree. Any `context.state(originalStore)` call inside that subtree transparently reads from the replacement:
+`MappingStoreOverride` replaces one store with another within a scope's subtree. Any `context.state(originalStore)` call inside transparently reads from the replacement:
 
 ```dart
 await tester.pumpWidget(
   Caffeine(
-    scopeFactory: (_) => Scope(references: {
-      StoreOverride(analyticsStore, fakeAnalyticsStore),
-      StoreOverride(apiStore, mockApiStore),
+    scopeFactory: (_) => Scope(overrides: {
+      MappingStoreOverride(from: apiStore, to: fakeApiStore),
     }),
-    child: FeatureWidget(),
+    child: const FeatureWidget(),
   ),
 );
 ```
 
-`FeatureWidget` and everything inside it requires no modification — the override is fully transparent.
+`FeatureWidget` requires no modification — the override is fully transparent.
+
+To isolate a store to a single widget subtree (e.g., multiple independent counters on the same screen), fork a scope with the store bound:
+
+```dart
+class CounterFeature extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Caffeine(
+      scopeFactory: (context) =>
+          Caffeine.of(context).fork(overrides: {counterStore}),
+      child: Builder(
+        builder: (context) {
+          final count   = context.state(counterStore);
+          final doubled = context.state(doubledCounterValue);
+          // doubledCounterValue auto-promotes to live alongside counterStore.
+          return Column(/* ... */);
+        },
+      ),
+    );
+  }
+}
+```

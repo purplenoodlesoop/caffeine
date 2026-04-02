@@ -1,46 +1,82 @@
 import 'package:meta/meta.dart';
 
 import 'event.dart';
-import 'stateful.dart';
-import 'store_reference.dart';
-import 'types.dart';
+import 'override.dart';
 
-abstract interface class Store<S, E>
-    implements EventConsumer<E>, Stateful<S>, StoreReference {
-  factory Store(
-    StoreBody<S, E> body, {
-    Stream<E> Function(S state)? subscribe,
-  }) =>
-      _StoreImpl<S, E>(body, subscribeFactory: subscribe);
+// ── StoreOverride ─────────────────────────────────────────────────────────────
 
-  /// Calls [callback] with the concrete type parameters of this store,
-  /// recovering [S] and [E] for typed initialization.
-  @internal
-  void callTyped(void Function<S2, E2>(Store<S2, E2>) callback);
+final class MappingStoreOverride<T> implements StoreOverride {
+  final Store<T> from;
+  final Store<T> to;
 
-  @internal
-  StoreDescription<S, E> describe();
-
-  @internal
-  Stream<E> Function(S)? get subscribeFactory;
+  const MappingStoreOverride({required this.from, required this.to});
 }
 
-class _StoreImpl<S, E> implements Store<S, E> {
-  _StoreImpl(this._body, {this.subscribeFactory});
+// ── StateSource ───────────────────────────────────────────────────────────────
 
-  final StoreBody<S, E> _body;
+abstract interface class StateSource {
+  T read<T>(Store<T> node, {bool listen});
+}
+
+extension StateSourceX<T> on Store<T> {
+  T call(StateSource source, {bool listen = true}) =>
+      source.read(this, listen: listen);
+}
+
+// ── StoreState / StoreAcc ─────────────────────────────────────────────────────
+
+abstract interface class StoreState<S> {
+  S get current;
+
+  void on<E>(Event<E> event, Stream<S> Function(E) update);
+}
+
+abstract interface class StoreAcc<T>
+    implements StoreState<T>, EventSource, StateSource {}
+
+// ── Typedefs ──────────────────────────────────────────────────────────────────
+
+typedef DerivedStoreBody<T> = T Function(StateSource source);
+typedef AccumStoreBody<T> = T Function(StoreAcc<T> source);
+
+// ── Store ─────────────────────────────────────────────────────────────────────
+
+abstract interface class Store<T> implements StoreOverride, Event<T> {
+  const factory Store.derive(DerivedStoreBody<T> body) = _DerivedStore;
+  const factory Store.accum(AccumStoreBody<T> body) = _AccumStore;
+
+  /// Calls [callback] with the concrete type parameter of this store,
+  /// recovering [T] for typed initialization inside the scope.
+  @internal
+  void callTyped(void Function<T2>(Store<T2>) callback);
+}
+
+// ── Private implementations ───────────────────────────────────────────────────
+
+final class _DerivedStore<T> implements Store<T> {
+  const _DerivedStore(this.body);
+
+  final DerivedStoreBody<T> body;
 
   @override
-  final Stream<E> Function(S)? subscribeFactory;
+  void callTyped(void Function<T2>(Store<T2>) callback) => callback<T>(this);
+}
 
-  // Stateful<S>.body is not used for stores; scope uses describe() instead.
-  @override
-  S Function(Snapshot<S> $) get body => throw UnsupportedError('unreachable');
+final class _AccumStore<T> implements Store<T> {
+  const _AccumStore(this.body);
 
-  @override
-  void callTyped(void Function<S2, E2>(Store<S2, E2>) callback) =>
-      callback<S, E>(this);
+  final AccumStoreBody<T> body;
 
   @override
-  StoreDescription<S, E> describe() => _body(this);
+  void callTyped(void Function<T2>(Store<T2>) callback) => callback<T>(this);
+}
+
+// ── Internal accessors (used by scope only) ───────────────────────────────────
+
+extension StoreInternals<T> on Store<T> {
+  bool get isDerived => this is _DerivedStore<T>;
+  bool get isAccum => this is _AccumStore<T>;
+
+  DerivedStoreBody<T> get derivedBody => (this as _DerivedStore<T>).body;
+  AccumStoreBody<T> get accumBody => (this as _AccumStore<T>).body;
 }
