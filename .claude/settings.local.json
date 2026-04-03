@@ -5,7 +5,11 @@
       "Bash(dart test:*)",
       "Bash(flutter test:*)",
       "Bash(flutter run:*)",
-      "Bash(screencapture:*)"
+      "Bash(screencapture:*)",
+      "Bash(flutter analyze:*)",
+      "Bash(flutter pub:*)",
+      "Bash(flutter sdk-path:*)",
+      "Read(//Users/yakov/Documents/Programming/Flutter/pet/caffeine/$\\(flutter sdk-path \\)/packages/flutter_test/lib/**)"
     ]
   }
 }

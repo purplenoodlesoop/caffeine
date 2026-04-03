@@ -1,3 +1,15 @@
+## 2.0.0
+
+Aligned with caffeine 2.0.0.
+
+**Breaking changes:**
+- `context.state(node)` — parameter type changed from `Stateful<T>` to `Store<T>`
+- `context.fire(event)` — now requires an explicit value argument: `context.fire(event, value)`
+
+**Improvements:**
+- `Caffeine.of()` throws a `FlutterError` instead of asserting — error is surfaced in release mode with a descriptive message
+- `CaffeineInherited` constructor forwards `key`
+
 ## 1.0.0
 
 Initial release.
