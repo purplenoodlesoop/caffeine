@@ -149,6 +149,12 @@ class _ScopeImpl implements Scope {
   final List<_ScopeImpl> _children = [];
   bool _disposed = false;
 
+  // ── Batch flush (meaningful at root; children forward to _root) ───────────
+
+  final Map<_AccumEntry, Object?> _pendingEmissions = {};
+  final Set<(Store, _ScopeImpl)> _pendingPropagation = {};
+  bool _flushScheduled = false;
+
   // ── Store resolution ──────────────────────────────────────────────────────
 
   Store<T> _resolveEffective<T>(Store<T> store) {
@@ -326,13 +332,13 @@ class _ScopeImpl implements Scope {
       for (final dependent in entry.dependents) {
         visit(dependent);
       }
-      result.insert(0, entry);
+      result.add(entry);
     }
 
     for (final r in roots) {
       visit(r);
     }
-    return result;
+    return result.reversed.toList();
   }
 
   // ── Public API ────────────────────────────────────────────────────────────
@@ -358,7 +364,7 @@ class _ScopeImpl implements Scope {
   void _broadcastFire<T>(Event<T> event, T value) {
     if (_disposed) return;
     _localFire(event, value);
-    for (final child in _children) {
+    for (final child in List.of(_children)) {
       child._broadcastFire(event, value);
     }
   }
@@ -375,15 +381,42 @@ class _ScopeImpl implements Scope {
     Stream<S> stream,
   ) {
     final owner = _findOwner(store) ?? _root;
-    final sub = stream.listen((newState) {
-      final old = entry.value;
-      entry.value = newState;
-      if (newState != old) {
-        entry.controller?.add(newState);
-        owner._propagate(store);
-      }
-    });
+    late StreamSubscription<S> sub;
+    sub = stream.listen(
+      (newState) {
+        final old = entry.value;
+        entry.value = newState; // synchronous — read() always returns current value
+        if (newState != old) {
+          final root = owner._root;
+          if (entry.controller != null) root._pendingEmissions[entry] = newState;
+          root._pendingPropagation.add((store, owner));
+          if (!root._flushScheduled) {
+            root._flushScheduled = true;
+            scheduleMicrotask(root._flushBatch);
+          }
+        }
+      },
+      onError: Zone.current.handleUncaughtError,
+      onDone: () => entry.subscriptions.remove(sub),
+    );
     entry.subscriptions.add(sub);
+  }
+
+  void _flushBatch() {
+    _flushScheduled = false;
+
+    // Notify accum store stream subscribers — Map ensures only final value per store per batch.
+    for (final MapEntry(:key, :value) in _pendingEmissions.entries) {
+      (key.controller as StreamController).add(value);
+    }
+    _pendingEmissions.clear();
+
+    // One propagation pass per changed store (Set deduplicates multiple fires).
+    final pending = Set.of(_pendingPropagation);
+    _pendingPropagation.clear();
+    for (final (store, scope) in pending) {
+      if (!scope._disposed) scope._propagate(store);
+    }
   }
 
   @override
@@ -404,11 +437,14 @@ class _ScopeImpl implements Scope {
   }
 
   @override
-  void dispose() {
+  void dispose() => _disposeImpl(unregister: true);
+
+  void _disposeImpl({required bool unregister}) {
     if (_disposed) return;
     _disposed = true;
+    if (unregister) _parent?._children.remove(this);
     for (final child in _children) {
-      child.dispose();
+      child._disposeImpl(unregister: false);
     }
     for (final entry in _entries.values) {
       if (entry is _AccumEntry) {
@@ -420,6 +456,11 @@ class _ScopeImpl implements Scope {
     }
     _entries.clear();
     _eventIndex.clear();
+    _bound.clear();
+    _overrides.clear();
+    _boundEvents.clear();
+    _pendingEmissions.clear();
+    _pendingPropagation.clear();
   }
 }
 

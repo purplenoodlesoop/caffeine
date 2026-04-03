@@ -100,7 +100,7 @@ void main() {
 
     testWidgets('asserts when no Caffeine ancestor is present', (tester) async {
       await tester.pumpWidget(Builder(builder: (ctx) {
-        expect(() => Caffeine.of(ctx), throwsAssertionError);
+        expect(() => Caffeine.of(ctx), throwsA(isA<FlutterError>()));
         return const SizedBox();
       }));
     });
@@ -138,6 +138,7 @@ void main() {
       ));
 
       scope.fire(increment, null);
+      await tester.pump();
       await tester.pump();
 
       expect(scope.read(counter).count, 1);
@@ -235,12 +236,12 @@ void main() {
       expect(find.text('0'), findsOneWidget);
 
       scope.fire(increment, null);
-      await Future.microtask(() {});
+      await tester.pump();
       await tester.pump();
       expect(find.text('1'), findsOneWidget);
 
       scope.fire(increment, null);
-      await Future.microtask(() {});
+      await tester.pump();
       await tester.pump();
       expect(find.text('2'), findsOneWidget);
     });
@@ -260,7 +261,7 @@ void main() {
       expect(find.text('0'), findsOneWidget);
 
       scope.fire(increment, null);
-      await Future.microtask(() {});
+      await tester.pump();
       await tester.pump();
       expect(find.text('2'), findsOneWidget);
     });
@@ -284,6 +285,7 @@ void main() {
 
       scope.fire(increment, null);
       scope.fire(increment, null);
+      await tester.pump();
       await tester.pump();
 
       expect(builds.length, 1);
@@ -310,17 +312,17 @@ void main() {
       expect(builds.length, 1);
 
       scope.fire(reset, null);
-      await Future.microtask(() {});
+      await tester.pump();
       await tester.pump();
       expect(builds.length, 1);
 
       scope.fire(increment, null);
-      await Future.microtask(() {});
+      await tester.pump();
       await tester.pump();
       expect(builds.length, 2);
 
       scope.fire(increment, null);
-      await Future.microtask(() {});
+      await tester.pump();
       await tester.pump();
       expect(builds.length, 2);
     });
@@ -343,7 +345,7 @@ void main() {
       expect(find.text('0,0'), findsOneWidget);
 
       scope.fire(increment, null);
-      await Future.microtask(() {});
+      await tester.pump();
       await tester.pump();
       expect(find.text('1,1'), findsOneWidget);
     });
@@ -377,14 +379,16 @@ void main() {
 
       notifier.value++;
       await tester.pump();
+      await tester.pump();
       notifier.value++;
+      await tester.pump();
       await tester.pump();
       expect(builds.length, 3);
 
       builds.clear();
 
       scope.fire(increment, null);
-      await Future.microtask(() {});
+      await tester.pump();
       await tester.pump();
       expect(builds.length, 1);
     });
@@ -420,7 +424,7 @@ void main() {
       builds.clear();
 
       scope.fire(setUser, (firstName: 'Jane', lastName: 'Smith'));
-      await Future.microtask(() {});
+      await tester.pump();
       await tester.pump();
 
       expect(builds.length, 1);
@@ -449,7 +453,7 @@ void main() {
       expect(find.text('JOHN DOE'), findsOneWidget);
 
       scope.fire(setUser, (firstName: 'Jane', lastName: 'Smith'));
-      await Future.microtask(() {});
+      await tester.pump();
       await tester.pump();
       expect(find.text('JANE SMITH'), findsOneWidget);
     });
@@ -483,7 +487,7 @@ void main() {
       builds.clear();
 
       scope.fire(setUser, (firstName: 'Jane', lastName: 'Smith'));
-      await Future.microtask(() {});
+      await tester.pump();
       await tester.pump();
 
       expect(builds.length, 1);
@@ -517,19 +521,24 @@ void main() {
 
     testWidgets('override in child scope does not affect parent', (tester) async {
       final real = makeCounter();
-      final fake = makeCounter();
+      // fake uses its own event so child fires don't bleed into parent's real store
+      final fakeInc = Event<void>();
+      final fake = Store<CounterState>.accum((ctx) {
+        ctx.on(fakeInc, (_) async* { yield (count: ctx.current.count + 1); });
+        return (count: 0);
+      });
 
       final parent = Scope();
       parent.read(real); // initialize real in parent
-      parent.fire(increment, null);
+      parent.fire(increment, null); // real = 1
       await Future.microtask(() {});
 
       final child = parent.fork(
         overrides: {MappingStoreOverride(from: real, to: fake)},
       );
       child.read(real); // initialize fake (resolved via override) in child
-      child.fire(increment, null);
-      child.fire(increment, null);
+      child.fire(fakeInc, null); // fake = 1
+      child.fire(fakeInc, null); // fake = 2
       await Future.microtask(() {});
 
       String? parentRead, childRead;
@@ -568,7 +577,7 @@ void main() {
       expect(find.text('0'), findsOneWidget);
 
       scope.fire(increment, null);
-      await Future.microtask(() {});
+      await tester.pump();
       await tester.pump();
       expect(find.text('1'), findsOneWidget);
     });
@@ -578,17 +587,26 @@ void main() {
 
   group('Nested Caffeine — scope forking', () {
     testWidgets('inner widget reads from its own forked scope', (tester) async {
-      final shared = makeCounter();
-      final local = makeCounter();
+      // Use separate events so fires in one scope don't affect the other store.
+      final sharedInc = Event<void>();
+      final localInc = Event<void>();
+      final shared = Store<CounterState>.accum((ctx) {
+        ctx.on(sharedInc, (_) async* { yield (count: ctx.current.count + 1); });
+        return (count: 0);
+      });
+      final local = Store<CounterState>.accum((ctx) {
+        ctx.on(localInc, (_) async* { yield (count: ctx.current.count + 1); });
+        return (count: 0);
+      });
 
       final parentScope = Scope();
       final childScope = parentScope.fork(overrides: {local});
 
       parentScope.read(shared); // initialize
       childScope.read(local);   // initialize
-      parentScope.fire(increment, null);
-      childScope.fire(increment, null);
-      childScope.fire(increment, null);
+      parentScope.fire(sharedInc, null); // shared = 1
+      childScope.fire(localInc, null);   // local = 1
+      childScope.fire(localInc, null);   // local = 2
       await Future.microtask(() {});
 
       await tester.pumpWidget(Caffeine(
@@ -609,8 +627,13 @@ void main() {
     testWidgets(
         'inner scope store changes trigger rebuild only in inner widget',
         (tester) async {
+      // local uses its own event so child fires don't reach the shared store.
+      final localInc = Event<void>();
       final shared = makeCounter();
-      final local = makeCounter();
+      final local = Store<CounterState>.accum((ctx) {
+        ctx.on(localInc, (_) async* { yield (count: ctx.current.count + 1); });
+        return (count: 0);
+      });
 
       final parentScope = Scope();
       final childScope = parentScope.fork(overrides: {local});
@@ -643,8 +666,8 @@ void main() {
       outerBuilds.clear();
       innerBuilds.clear();
 
-      childScope.fire(increment, null);
-      await Future.microtask(() {});
+      childScope.fire(localInc, null);
+      await tester.pump();
       await tester.pump();
 
       expect(innerBuilds.length, 1);
@@ -653,8 +676,13 @@ void main() {
 
     testWidgets('parent scope store changes trigger rebuild only in outer widget',
         (tester) async {
+      // local uses its own event so parent fires don't reach the local store.
+      final localInc = Event<void>();
       final shared = makeCounter();
-      final local = makeCounter();
+      final local = Store<CounterState>.accum((ctx) {
+        ctx.on(localInc, (_) async* { yield (count: ctx.current.count + 1); });
+        return (count: 0);
+      });
 
       final parentScope = Scope();
       final childScope = parentScope.fork(overrides: {local});
@@ -688,7 +716,7 @@ void main() {
       innerBuilds.clear();
 
       parentScope.fire(increment, null);
-      await Future.microtask(() {});
+      await tester.pump();
       await tester.pump();
 
       expect(outerBuilds.length, 1);
@@ -718,9 +746,11 @@ void main() {
 
       await tester.tap(find.byType(GestureDetector));
       await tester.pump();
+      await tester.pump();
       expect(find.text('1'), findsOneWidget);
 
       await tester.tap(find.byType(GestureDetector));
+      await tester.pump();
       await tester.pump();
       expect(find.text('2'), findsOneWidget);
     });
@@ -784,7 +814,7 @@ void main() {
       expect(find.text('idle'), findsOneWidget);
 
       scope.fire(start, null);
-      await Future.microtask(() {});
+      await tester.pump();
       await tester.pump();
       expect(find.text('loading'), findsOneWidget);
 
@@ -812,6 +842,7 @@ void main() {
         }),
       ));
 
+      await tester.pump();
       await tester.pump();
       expect(find.text('1'), findsOneWidget);
     });

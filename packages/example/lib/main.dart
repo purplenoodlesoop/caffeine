@@ -5,12 +5,7 @@ import 'package:flutter_caffeine/flutter_caffeine.dart';
 // ── App ───────────────────────────────────────────────────────────────────────
 
 void main() {
-  runApp(
-    Caffeine(
-      scopeFactory: (context) => Scope(overrides: {resetAll}),
-      child: const MyApp(),
-    ),
-  );
+  runApp(Caffeine(scopeFactory: (context) => Scope(), child: const MyApp()));
 }
 
 class MyApp extends StatelessWidget {
@@ -111,7 +106,7 @@ class CounterFeature extends StatelessWidget {
   Widget build(BuildContext context) {
     return Caffeine(
       scopeFactory: (context) =>
-          Caffeine.of(context).fork(overrides: {counterStore}),
+          Caffeine.of(context).fork(overrides: {counterStore, increment}),
       child: Builder(
         builder: (context) {
           final count = context.state(counterStore);

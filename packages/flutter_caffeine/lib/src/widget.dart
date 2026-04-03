@@ -33,8 +33,14 @@ class Caffeine extends StatefulWidget {
   static Scope of(BuildContext context) {
     final inherited =
         context.getInheritedWidgetOfExactType<CaffeineInherited>();
-    assert(inherited != null, 'No Caffeine widget found in context');
-    return inherited!.scope;
+    if (inherited == null) {
+      throw FlutterError(
+        'No Caffeine widget found in context.\n'
+        'Make sure a Caffeine widget is an ancestor of the widget that '
+        'calls Caffeine.of().',
+      );
+    }
+    return inherited.scope;
   }
 
   @override
