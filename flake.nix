@@ -44,7 +44,16 @@
               flutter-caffeine = pkgs.callPackage ./nix/flutter-caffeine-check.nix { inherit mkCheck; };
             };
 
-          ci-yaml = (pkgs.formats.yaml { }).generate "ci.yml" (import ./nix/ci.nix);
+          ci-yaml-body = (pkgs.formats.yaml { }).generate "ci-body.yml" (import ./nix/ci.nix);
+          ci-yaml = pkgs.runCommand "ci.yml" { } ''
+            cat > $out <<'HEADER'
+            # AUTO-GENERATED from nix/ci.nix — DO NOT EDIT BY HAND.
+            # Regenerate with: nix run .#sync-ci
+            # Drift is caught by: nix build .#checks.<system>.ci-up-to-date
+
+            HEADER
+            cat ${ci-yaml-body} >> $out
+          '';
 
           sync-ci = pkgs.writeShellApplication {
             name = "sync-ci";

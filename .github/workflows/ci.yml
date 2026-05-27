@@ -1,3 +1,7 @@
+# AUTO-GENERATED from nix/ci.nix — DO NOT EDIT BY HAND.
+# Regenerate with: nix run .#sync-ci
+# Drift is caught by: nix build .#checks.<system>.ci-up-to-date
+
 concurrency:
   cancel-in-progress: true
   group: ci-${{ github.ref }}
