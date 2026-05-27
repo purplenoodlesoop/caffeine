@@ -52,29 +52,29 @@ void main() {
     });
 
     test('fire increments state', () async {
-      increment(scope, null);
+      increment(scope);
       await Future.delayed(Duration.zero);
       expect(counter(scope).count, 1);
     });
 
     test('fire decrement', () async {
-      increment(scope, null);
-      increment(scope, null);
-      decrement(scope, null);
+      increment(scope);
+      increment(scope);
+      decrement(scope);
       await Future.delayed(Duration.zero);
       expect(counter(scope).count, 1);
     });
 
     test('fire reset', () async {
-      increment(scope, null);
-      reset(scope, null);
+      increment(scope);
+      reset(scope);
       await Future.delayed(Duration.zero);
       expect(counter(scope).count, 0);
     });
 
     test('multiple fires accumulate', () async {
       for (var i = 0; i < 5; i++) {
-        increment(scope, null);
+        increment(scope);
       }
       await Future.delayed(Duration.zero);
       expect(counter(scope).count, 5);
@@ -83,7 +83,7 @@ void main() {
     test('equal new state does not trigger notification', () async {
       final states = <int>[];
       scope.stream(counter).listen((s) => states.add(s.count));
-      reset(scope, null); // already 0 — no change
+      reset(scope); // already 0 — no change
       await Future.delayed(Duration.zero);
       expect(states, isEmpty);
     });
@@ -106,9 +106,9 @@ void main() {
       final states = <int>[];
       scope.stream(counter).listen((s) => states.add(s.count));
 
-      increment(scope, null);
-      increment(scope, null);
-      increment(scope, null);
+      increment(scope);
+      increment(scope);
+      increment(scope);
 
       await Future.delayed(Duration.zero);
       expect(states, [3]); // batched: only final value emitted per flush
@@ -120,8 +120,8 @@ void main() {
       scope.stream(counter).listen((s) => a.add(s.count));
       scope.stream(counter).listen((s) => b.add(s.count));
 
-      increment(scope, null);
-      increment(scope, null);
+      increment(scope);
+      increment(scope);
 
       await Future.delayed(Duration.zero);
       expect(a, [2]); // batched: only final value emitted per flush
@@ -139,7 +139,7 @@ void main() {
       final store = Store<List<String>>.accum((ctx) {
         ctx.on(start, (_) async* {
           await Future.delayed(Duration.zero);
-          done(ctx, null);
+          done(ctx);
         });
         ctx.on(done, (_) async* {
           yield [...ctx.current, 'done'];
@@ -149,7 +149,7 @@ void main() {
 
       final scope = Scope();
       scope.read(store);
-      start(scope, null);
+      start(scope);
       await Future.delayed(const Duration(milliseconds: 10));
       expect(scope.read(store), ['done']);
       scope.dispose();
@@ -160,7 +160,7 @@ void main() {
 
       final store = Store<int>.accum((ctx) {
         ctx.on(init, (_) async* { yield ctx.current + 1; });
-        init(ctx, null);
+        init(ctx);
         return 0;
       });
 
@@ -187,7 +187,7 @@ void main() {
 
       final scope = Scope();
       scope.read(store);
-      go(scope, null);
+      go(scope);
       await Future.delayed(const Duration(milliseconds: 10));
       expect(scope.read(store), 6);
       scope.dispose();
@@ -201,7 +201,7 @@ void main() {
         ctx.on(start, (_) async* {
           yield 'loading';
           await Future.delayed(Duration.zero);
-          loaded(ctx, null);
+          loaded(ctx);
         });
         ctx.on(loaded, (_) async* { yield 'done'; });
         return 'idle';
@@ -209,7 +209,7 @@ void main() {
 
       final scope = Scope();
       scope.read(store);
-      start(scope, null);
+      start(scope);
       await Future.delayed(Duration.zero);
       expect(scope.read(store), 'loading');
       await Future.delayed(const Duration(milliseconds: 10));
@@ -241,7 +241,7 @@ void main() {
       final scope = Scope();
       scope.read(log);
       scope.read(producer);
-      go(scope, null);
+      go(scope);
       // cross-store fire schedules two microtask hops — use delayed(0) to drain
       await Future.delayed(Duration.zero);
       expect(scope.read(log), ['produced']);
@@ -270,7 +270,7 @@ void main() {
     test('recomputes when dependency changes', () async {
       final doubled = Store<int>.derive((s) => counter(s).count * 2);
       scope.read(doubled);
-      increment(scope, null);
+      increment(scope);
       await Future.delayed(Duration.zero);
       expect(scope.read(doubled), 2);
     });
@@ -278,7 +278,7 @@ void main() {
     test('chains derived nodes', () async {
       final doubled = Store<int>.derive((s) => counter(s).count * 2);
       final quadrupled = Store<int>.derive((s) => doubled(s) * 2);
-      increment(scope, null);
+      increment(scope);
       await Future.delayed(Duration.zero);
       expect(scope.read(quadrupled), 4);
     });
@@ -289,8 +289,8 @@ void main() {
       scope.stream(doubled).listen(emitted.add);
       scope.read(doubled);
 
-      increment(scope, null);
-      increment(scope, null);
+      increment(scope);
+      increment(scope);
 
       await Future.delayed(Duration.zero);
       expect(emitted, [4]); // batched: only final value emitted per flush
@@ -306,8 +306,8 @@ void main() {
       scope.read(derived);
       computeCount = 0;
 
-      reset(scope, null); // already 0, no change
-      reset(scope, null);
+      reset(scope); // already 0, no change
+      reset(scope);
       await Future.delayed(Duration.zero);
       scope.read(derived);
 
@@ -320,8 +320,8 @@ void main() {
       scope.stream(isPositive).listen(emitted.add);
       scope.read(isPositive);
 
-      increment(scope, null); // 0→1: false→true, emits
-      increment(scope, null); // 1→2: true→true, no emit
+      increment(scope); // 0→1: false→true, emits
+      increment(scope); // 1→2: true→true, no emit
 
       await Future.delayed(Duration.zero);
       expect(emitted, [true]);
@@ -329,7 +329,7 @@ void main() {
 
     test('call extension reads derived store', () async {
       final doubled = Store<int>.derive((s) => counter(s).count * 2);
-      increment(scope, null);
+      increment(scope);
       await Future.delayed(Duration.zero);
       expect(scope.read(doubled), 2);
     });
@@ -453,7 +453,7 @@ void main() {
       final counter = makeCounter();
       final root = Scope();
       root.read(counter);
-      increment(root, null);
+      increment(root);
       await Future.delayed(Duration.zero);
 
       final child = root.fork();
@@ -469,7 +469,7 @@ void main() {
       // First access from child — counter is unbound, so root owns it.
       child.read(counter);
       // Fire from root (that's where the counter actually lives).
-      increment(root, null);
+      increment(root);
       await Future.delayed(Duration.zero);
 
       expect(counter(root).count, 1); // root sees it
@@ -486,7 +486,7 @@ void main() {
       final child = root.fork(overrides: {store});
 
       child.read(store); // initialize in child scope
-      inc(child, null);
+      inc(child);
       await Future.delayed(Duration.zero);
       expect(store(child).count, 1);
 
@@ -503,7 +503,7 @@ void main() {
       child.stream(store).listen(received.add);
       child.read(store);
 
-      inc(child, null);
+      inc(child);
       await Future.delayed(Duration.zero);
       expect(received, [(count: 1)]);
 
@@ -516,7 +516,7 @@ void main() {
       final sharedCounter = makeCounter();
       final root = Scope();
       root.read(sharedCounter);
-      increment(root, null);
+      increment(root);
       await Future.delayed(Duration.zero);
 
       final child = root.fork();
@@ -539,9 +539,9 @@ void main() {
       child.read(childC.store);
       grand.read(grandC.store);
 
-      rootC.inc(root, null);
-      childC.inc(child, null);
-      grandC.inc(grand, null);
+      rootC.inc(root);
+      childC.inc(child);
+      grandC.inc(grand);
       await Future.delayed(Duration.zero);
 
       grand.dispose(); // cleans up grandC only
@@ -566,15 +566,15 @@ void main() {
 
       final root = Scope();
       root.read(real);
-      realInc(root, null); // real: 0→1
+      realInc(root); // real: 0→1
       await Future.delayed(Duration.zero);
 
       final child = root.fork(
         overrides: {MappingStoreOverride(from: real, to: fake)},
       );
       child.read(real); // resolves to fake, initializes fake in child scope
-      fakeInc(child, null); // fake: 0→1
-      fakeInc(child, null); // fake: 1→2
+      fakeInc(child); // fake: 0→1
+      fakeInc(child); // fake: 1→2
       await Future.delayed(Duration.zero);
 
       expect(real(child).count, 2); // child sees fake
@@ -604,8 +604,8 @@ void main() {
         overrides: {MappingStoreOverride(from: real, to: fake)},
       );
       scope.read(real); // resolves to fake — only fake is initialized
-      sharedInc(scope, null); // fires fake
-      sharedInc(scope, null);
+      sharedInc(scope); // fires fake
+      sharedInc(scope);
       await Future.delayed(Duration.zero);
 
       expect(real(scope).count, 2); // real resolves to fake
@@ -627,7 +627,7 @@ void main() {
       child.read(store);
       expect(child.read(doubled), 0);
 
-      inc(child, null);
+      inc(child);
       await Future.delayed(Duration.zero);
       expect(child.read(doubled), 2);
       root.dispose();
@@ -647,7 +647,7 @@ void main() {
       expect(grand2.read(doubled), 0);
 
       // inc is bound to child — routes there and broadcasts within child's subtree.
-      inc(grand1, null);
+      inc(grand1);
       await Future.delayed(Duration.zero);
 
       expect(grand1.read(doubled), 2);
@@ -680,8 +680,8 @@ void main() {
       final root = Scope();
       // Both accum stores go to root (unbound) — sum also stays at root.
       expect(root.read(sum), 0);
-      evA(root, null);
-      evB(root, null);
+      evA(root);
+      evB(root);
       await Future.delayed(Duration.zero);
       expect(root.read(sum), 2);
       root.dispose();
@@ -716,14 +716,14 @@ void main() {
       left.read(counterA);
       right.read(counterB);
 
-      incA(left, null);
-      incB(right, null);
-      incB(right, null);
+      incA(left);
+      incB(right);
+      incB(right);
       await Future.delayed(Duration.zero);
       expect(counterA(left), 1);
       expect(counterB(right), 2);
 
-      globalReset(left, null); // routes to root, resets both
+      globalReset(left); // routes to root, resets both
       await Future.delayed(Duration.zero);
 
       expect(counterA(left), 0);
@@ -753,7 +753,7 @@ void main() {
       expect(counterB(right), 5);
 
       // Fire from root — broadcasts to both left and right scopes.
-      globalReset(root, null);
+      globalReset(root);
       await Future.delayed(Duration.zero);
 
       expect(counterA(left), 0);
@@ -781,7 +781,7 @@ void main() {
       right.read(counterB);
 
       // Fire from left — broadcasts through left subtree only.
-      scopedReset(left, null);
+      scopedReset(left);
       await Future.delayed(Duration.zero);
 
       expect(counterA(left), 0);
@@ -809,7 +809,7 @@ void main() {
       right.read(counterB);
 
       // Fire from grandchild — should route to root and broadcast to both.
-      globalReset(grandLeft, null);
+      globalReset(grandLeft);
       await Future.delayed(Duration.zero);
 
       expect(counterA(left), 0);
@@ -835,7 +835,7 @@ void main() {
       left.read(counterA);
       right.read(counterB);
 
-      localInc(left, null); // routes to root, broadcasts to all descendants
+      localInc(left); // routes to root, broadcasts to all descendants
       await Future.delayed(Duration.zero);
 
       expect(counterA(left), 1);
@@ -864,7 +864,7 @@ void main() {
       left.dispose(); // dispose one child before firing
 
       // Should not throw even though left is disposed.
-      globalReset(root, null);
+      globalReset(root);
       await Future.delayed(Duration.zero);
 
       expect(counterB(right), 0); // right still works
@@ -897,7 +897,7 @@ void main() {
       recomputeCount = 0;
 
       // counter changes — derived must NOT recompute
-      increment(scope, null);
+      increment(scope);
       await Future.delayed(Duration.zero);
       scope.read(derived);
       expect(recomputeCount, 0);

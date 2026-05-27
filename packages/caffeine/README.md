@@ -68,7 +68,7 @@ final scope = Scope();
 print(scope.read(counterStore));  // 0
 print(scope.read(doubledCount));  // 0
 
-increment(scope, null);
+\1(\2);
 await Future.microtask(() {});
 
 print(scope.read(counterStore));  // 1
@@ -96,7 +96,7 @@ final loadUser   = Event<int>();    // carries a user ID
 The `EventSourceX` extension makes every `Event<T>` callable as a shorthand for `scope.fire(event, value)`:
 
 ```dart
-increment(scope, null);   // preferred — same as scope.fire(increment, null)
+\1(\2);   // preferred — same as scope.\1(\2)
 setName(scope, 'Alice');  // preferred — same as scope.fire(setName, 'Alice')
 ```
 
@@ -271,7 +271,7 @@ final configStore = Store<Config>.accum((ctx) {
     yield config;
   });
 
-  loadConfig(ctx, null);  // fires immediately on init
+  \1(\2);  // fires immediately on init
   return Config.empty();
 });
 ```
@@ -366,7 +366,7 @@ final root  = Scope();
 final child = root.fork(overrides: {counterStore});
 
 // counterStore lives in child, not root.
-increment(child, null);
+\1(\2);
 await Future.microtask(() {});
 
 child.dispose(); // counterStore is disposed here; root is unaffected.
@@ -403,14 +403,14 @@ final root = Scope(overrides: {resetAll});
 final leftScope  = root.fork(overrides: {counterStore});
 final rightScope = root.fork(overrides: {counterStore});
 
-resetAll(root, null);  // broadcasts to all descendants
+\1(\2);  // broadcasts to all descendants
 ```
 
 **Firing from a descendant** routes to the owning scope and broadcasts:
 
 ```dart
 final grandChild = leftScope.fork();
-resetAll(grandChild, null);  // routes to root, broadcasts to all descendants
+\1(\2);  // routes to root, broadcasts to all descendants
 ```
 
 **Binding to an intermediate scope** makes the event semi-global — it broadcasts only within that scope's subtree:
@@ -420,7 +420,9 @@ final localReset = Event<void>();
 
 // localReset only broadcasts within leftScope and its children.
 final leftScope = root.fork(overrides: {counterStore, localReset});
-localReset(leftScope, null);  // rightScope is unaffected
+\1(\2);  // rightScope is unaffected
 ```
 
 **Unbound events** broadcast from root, so all scopes in the tree receive them.
+
+For `Event<void>`, the call form takes no second argument — write `localReset(leftScope)` instead of `localReset(leftScope, null)`.

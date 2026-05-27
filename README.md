@@ -4,8 +4,8 @@ A reactive microstore ecosystem for Dart and Flutter.
 
 | Package | Description | Version |
 |---|---|---|
-| [`caffeine`](packages/caffeine) | Pure Dart reactive microstore | `^2.0.0` |
-| [`flutter_caffeine`](packages/flutter_caffeine) | Flutter bindings for caffeine | `^1.0.0` |
+| [`caffeine`](packages/caffeine) | Pure Dart reactive microstore | `^3.0.0` |
+| [`flutter_caffeine`](packages/flutter_caffeine) | Flutter bindings for caffeine | `^3.0.0` |
 
 ---
 
@@ -54,18 +54,16 @@ Flutter bindings that attach caffeine scopes to the widget tree with zero boiler
 ```dart
 // ── Stores ────────────────────────────────────────────────────────────────────
 
-final increment = Event<void>();
-final resetAll  = Event<void>();
+const increment = Event<void>(debugLabel: 'increment');
+const resetAll  = Event<void>(debugLabel: 'resetAll');
 
 final counterStore = Store<int>.accum((ctx) {
   ctx.on(increment, (_) async* { yield ctx.current + 1; });
   ctx.on(resetAll,  (_) async* { yield 0; });
   return 0;
-});
+}, debugLabel: 'counter');
 
-final doubledCount = Store<int>.derive(
-  (source) => counterStore(source) * 2,
-);
+final doubledCount = counterStore.select((c) => c * 2);
 
 // ── Flutter ───────────────────────────────────────────────────────────────────
 
@@ -93,7 +91,7 @@ class CounterFeature extends StatelessWidget {
           return Column(children: [
             Text('Count: $count  Doubled: $doubled'),
             ElevatedButton(
-              onPressed: () => context.fire(increment, null),
+              onPressed: () => increment(Caffeine.of(context)),
               child: const Text('Increment'),
             ),
           ]);

@@ -1,3 +1,17 @@
+## 3.0.0 — 2026-05-27
+
+Aligned with caffeine 3.0.0. See its [CHANGELOG](../caffeine/CHANGELOG.md) for the underlying API changes.
+
+### Breaking
+- **Pulls in caffeine 3.0.0** — every breaking change there applies through the flutter bindings:
+  - `Event<void>` instances now fire via `event(source)` instead of `event(source, null)`.
+  - `Scope.read(node, listen: false)` throws; use only inside `Store.derive` bodies.
+  - Disposed-scope operations throw `StateError`.
+- **`flutter` SDK floor bumped** from `>=1.17.0` to `>=3.10.0`.
+
+### Improvements
+- `Caffeine.of(context)` already threw `FlutterError` in 2.0; no behavioral change here.
+
 ## 2.0.0
 
 Aligned with caffeine 2.0.0.
