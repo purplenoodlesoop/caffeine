@@ -61,6 +61,13 @@ builder {
     install -m 644 ${filteredLockYaml} pubspec.lock
   '';
 
+  # Skip any builder-supplied build step (e.g. `flutter build linux` for the
+  # Linux Flutter variant, which looks for lib/main.dart). We only run tests.
+  buildPhase = ''
+    runHook preBuild
+    runHook postBuild
+  '';
+
   doCheck = true;
   # dart/flutter test rewrite .dart_tool/package_config.json on startup; copy
   # to a writable dir so the symlinks back into /nix/store don't block it.
@@ -73,8 +80,12 @@ builder {
     runHook postCheck
   '';
 
+  # Touch every declared output (Flutter's Linux variant adds `debug`).
+  # No runHook — dartInstallCacheHook would otherwise try `mkdir $pubcache`
+  # over our touched file. We're bypassing the builder's install entirely.
   installPhase = ''
-    touch $out
-    touch $pubcache
+    for o in $outputs; do
+      eval "touch \$$o"
+    done
   '';
 }
