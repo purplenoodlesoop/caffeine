@@ -32,62 +32,124 @@ void main() {
     });
   });
 
-  // ── G1: onDispose hook ────────────────────────────────────────────────────
+  // ── G1: ctx.dispose event ─────────────────────────────────────────────────
 
-  group('onDispose hook', () {
-    test('callback runs when scope is disposed', () {
+  group('ctx.dispose event', () {
+    test('handler runs when scope is disposed', () async {
       var disposeCount = 0;
       final store = Store<int>.accum((ctx) {
-        ctx.onDispose(() => disposeCount++);
+        ctx.on(ctx.dispose, (_) async* {
+          disposeCount++;
+        });
         return 0;
       });
       final scope = Scope();
       scope.read(store);
       expect(disposeCount, 0);
       scope.dispose();
+      await Future.delayed(Duration.zero);
       expect(disposeCount, 1);
     });
 
-    test('multiple onDispose callbacks run in registration order', () {
-      final order = <int>[];
+    test('multiple dispose handlers all run', () async {
+      final ran = <int>{};
       final store = Store<int>.accum((ctx) {
-        ctx.onDispose(() => order.add(1));
-        ctx.onDispose(() => order.add(2));
-        ctx.onDispose(() => order.add(3));
+        ctx.on(ctx.dispose, (_) async* {
+          ran.add(1);
+        });
+        ctx.on(ctx.dispose, (_) async* {
+          ran.add(2);
+        });
+        ctx.on(ctx.dispose, (_) async* {
+          ran.add(3);
+        });
         return 0;
       });
       final scope = Scope();
       scope.read(store);
       scope.dispose();
-      expect(order, [1, 2, 3]);
+      await Future.delayed(Duration.zero);
+      expect(ran, {1, 2, 3});
     });
 
-    test('callback throwing does not block subsequent callbacks', () {
-      var second = false;
-      final store = Store<int>.accum((ctx) {
-        ctx.onDispose(() => throw StateError('boom'));
-        ctx.onDispose(() => second = true);
+    test('per-store dispose events do not cross-fire', () async {
+      final calls = <String>[];
+      final a = Store<int>.accum((ctx) {
+        ctx.on(ctx.dispose, (_) async* {
+          calls.add('a');
+        });
+        return 0;
+      });
+      final b = Store<int>.accum((ctx) {
+        ctx.on(ctx.dispose, (_) async* {
+          calls.add('b');
+        });
         return 0;
       });
       final scope = Scope();
-      scope.read(store);
-      runZonedGuarded(scope.dispose, (_, _) {});
-      expect(second, true);
+      scope.read(a);
+      scope.read(b);
+      scope.dispose();
+      await Future.delayed(Duration.zero);
+      expect(calls.toSet(), {'a', 'b'});
     });
   });
 
-  // ── G2: Duplicate on() throws ─────────────────────────────────────────────
+  // ── G2: Multiple on() handlers per source ────────────────────────────────
 
-  group('Duplicate on() throws', () {
-    test('second on(event, handler) for same event throws', () {
+  group('Multiple handlers per source', () {
+    test('two on(event, ...) registrations both run on fire', () async {
       final inc = Event<void>();
       final scope = Scope();
+      final hits = <int>[];
       final store = Store<int>.accum((ctx) {
-        ctx.on(inc, (_) async* {});
-        ctx.on(inc, (_) async* {}); // should throw
+        ctx.on(inc, (_) async* {
+          hits.add(1);
+          yield ctx.current + 1;
+        });
+        ctx.on(inc, (_) async* {
+          hits.add(2);
+        });
         return 0;
       });
-      expect(() => scope.read(store), throwsA(isA<StateError>()));
+      scope.read(store);
+      inc(scope);
+      await Future.delayed(Duration.zero);
+      expect(hits, [1, 2]);
+      scope.dispose();
+    });
+  });
+
+  // ── G3: on(Store, ...) — react to other stores' value changes ────────────
+
+  group('Reacting to source stores', () {
+    test('on(otherStore) fires the handler on each new value', () async {
+      final inc = Event<void>();
+      final source = Store<int>.accum((ctx) {
+        ctx.on(inc, (_) async* {
+          yield ctx.current + 1;
+        });
+        return 0;
+      });
+
+      final mirrorEvents = <int>[];
+      final mirror = Store<int>.accum((ctx) {
+        ctx.on(source, (v) async* {
+          mirrorEvents.add(v);
+          yield v;
+        });
+        return -1;
+      });
+
+      final scope = Scope();
+      scope.read(mirror); // forces source init via the on(source, ...) wiring
+      inc(scope);
+      await Future.delayed(Duration.zero); // flush so mirror sees value 1
+      inc(scope);
+      await Future.delayed(Duration.zero); // flush so mirror sees value 2
+      // mirror sees each distinct value (initial 0 isn't replayed)
+      expect(mirrorEvents, [1, 2]);
+      expect(scope.read(mirror), 2);
       scope.dispose();
     });
   });

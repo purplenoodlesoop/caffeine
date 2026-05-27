@@ -140,19 +140,19 @@ final userGreeting = Store<String>.derive(
 );
 ```
 
-The `source` parameter is a `StateSource`. The `StateSourceX` extension makes every `Store<T>` callable as a shorthand:
+The `source` parameter is a `DerivedSource` inside `Store.derive` bodies (or a `StateSource` elsewhere — `DerivedSource extends StateSource`). The `StoreReadX` extension makes every `Store<T>` callable as a shorthand:
 
 ```dart
 source.read(counterStore)   // explicit
-counterStore(source)        // preferred shorthand via StateSourceX extension
+counterStore(source)        // preferred shorthand via StoreReadX extension
 ```
 
-Pass `listen: false` to read a value without registering a dependency:
+Inside a derive body, every read is tracked as a dependency. To read without tracking, call `source.read(node, listen: false)` explicitly — the shorthand has no `listen:` parameter (and `listen: false` outside a derive body is a compile error, not a runtime throw):
 
 ```dart
 final snapshot = Store<String>.derive((source) {
-  final flag = flagStore(source);                    // dependency: rebuilds when flag changes
-  final count = counter(source, listen: false).count; // no dependency: count changes don't trigger recompute
+  final flag = flagStore(source);                       // dependency: rebuilds when flag changes
+  final count = source.read(counter, listen: false).count; // no dependency: count changes don't trigger recompute
   return flag ? 'count is $count' : 'hidden';
 });
 ```

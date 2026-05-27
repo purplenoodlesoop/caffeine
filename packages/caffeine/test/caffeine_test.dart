@@ -890,7 +890,7 @@ void main() {
       final derived = Store<int>.derive((s) {
         toggleStore(s); // real dep — also initializes toggleStore
         recomputeCount++;
-        return counter(s, listen: false).count; // no dep
+        return s.read(counter, listen: false).count; // no dep
       });
 
       scope.read(derived);

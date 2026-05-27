@@ -1,16 +1,22 @@
-## 3.0.0 — 2026-05-27
+## 3.0.0 — 2026-05-28
 
 ### Breaking
 - **`Event<void>` shorthand:** `signal(source)` replaces `signal(source, null)`. The shadowing extension constrains the generic variant to `T extends Object`, so events with nullable payloads (`Event<int?>`) lose the call shorthand and must use `source.fire(event, value)` directly.
-- **`Store<T>` no longer implements `Event<T>`.** `ctx.on(otherStore, ...)` was always meaningless and now fails to compile. Both `Store` and `Event` still implement `StoreOverride` independently, so the overrides API is unchanged.
-- **`Scope.read` / `StoreAcc.read` reject `listen: false`.** The flag was a silent no-op outside derived store bodies; passing it now throws `ArgumentError`. `listen: false` remains valid inside `Store.derive` recording.
-- **`StoreState.on` throws on duplicate registration.** Previously a second `ctx.on(event, ...)` for the same event silently overwrote the prior handler.
+- **`ctx.on` now takes a `Source<E>`, not just an `Event<E>`.** `Source<T>` is a new marker interface implemented by both `Event<T>` and `Store<T>`. You can react to another store's value changes the same way you react to an event: `ctx.on(otherStore, (value) async* { yield ...; })`. Each new value (post-flush) triggers the handler.
+- **Stores are no longer callable as events.** `someStore(source, value)` does not compile — the firing extension is on `Event<T>` only. Stores are immutable from outside; mutate them only through their own handlers. (Reading via `someStore(source)` still works.)
+- **`Scope.read` / `StoreAcc.read` no longer take `listen:`.** The parameter was meaningless outside derive bodies. The read API is now split: `StateSource.read(node)` has no `listen:`, `DerivedSource.read(node, {listen})` does. `Scope` and `StoreAcc` implement only `StateSource`, so `listen: false` outside a derive body is a compile error — not a runtime throw.
 - **Operations on a disposed scope throw `StateError`.** `read`, `fire`, `stream`, `fork`, `listen` all check `isDisposed` first.
 - **`Event<T>` is now `final` and accepts `debugLabel`.** Subclassing is no longer allowed.
 
 ### Added
-- **Concurrency strategies for event handlers.** `ctx.on(event, handler, concurrency: ...)` accepts `Concurrency.parallel` (default — caffeine ≤ 2 semantics), `drop`, `restart`, and `queue`.
-- **`StoreState.onDispose(callback)`** registers cleanup for external resources opened inside an accum body (timers, sockets, external subscriptions). Callbacks run when the owning scope is disposed.
+- **`Source<T>` marker** unifies `Event<T>` and `Store<T>` as `ctx.on` sources (see above).
+- **`ctx.dispose` event.** Each accum store exposes a per-store `Event<void> get dispose` on its context that fires when the owning scope is disposed. Subscribe like any other event to clean up external resources:
+  ```dart
+  final timer = Timer.periodic(...);
+  ctx.on(ctx.dispose, (_) async* { timer.cancel(); });
+  ```
+- **Multiple handlers per source.** `ctx.on(event, ...)` can be called more than once for the same source; all handlers run on every emission. Previously the second call silently overwrote the first.
+- **Concurrency strategies for handlers.** `ctx.on(source, handler, concurrency: ...)` accepts `Concurrency.parallel` (default — caffeine ≤ 2 semantics), `drop`, `restart`, and `queue`.
 - **Cycle detection.** Direct or indirect self-references in `Store.derive` throw `StateError` instead of overflowing the stack.
 - **Debug labels.** Optional `debugLabel:` parameter on `Event(...)`, `Store.derive(...)`, and `Store.accum(...)`. Included in `toString` and cycle-detection error messages.
 - **Custom equality.** Optional `equals: (a, b) => ...` parameter on `Store.derive` and `Store.accum` replaces the default `==` for change detection.

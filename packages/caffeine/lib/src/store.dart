@@ -13,74 +13,90 @@ final class MappingStoreOverride<T> implements StoreOverride {
   final Store<T> to;
 }
 
-/// Read API exposed inside a [Store.derive] body. Every read tracked here
-/// becomes a dependency of the derived store; the body is automatically
-/// recomputed whenever a dependency changes.
-///
-/// Pass `listen: false` for a one-shot read that does *not* register a
-/// dependency — the body will not recompute on that store's changes.
+/// Read API outside `Store.derive` bodies. Implemented by `Scope` and by the
+/// accum [StoreAcc] context. Reads here are one-shot — there is no `listen:`
+/// parameter, so passing one is a compile error.
 abstract interface class StateSource {
+  T read<T>(Store<T> node);
+}
+
+/// Read API inside `Store.derive` bodies. Extends [StateSource] with a
+/// `listen:` parameter — every read tracked here becomes a dependency of the
+/// derived store, and `listen: false` opts out for that read only. The body
+/// is automatically recomputed whenever a recorded dependency changes.
+abstract interface class DerivedSource implements StateSource {
+  @override
   T read<T>(Store<T> node, {bool listen = true});
 }
 
-/// Sugar: `someStore(source)` is short for `source.read(someStore)`. Inside a
-/// derived body, the read is tracked as a dependency unless `listen: false`
-/// is passed. Outside a derived body (e.g. on a [Scope] or [StoreAcc]), the
-/// listen parameter has no effect — passing `listen: false` there throws.
-extension StateSourceX<T> on Store<T> {
-  T call(StateSource source, {bool listen = true}) =>
-      source.read(this, listen: listen);
+/// Sugar: `someStore(source)` is short for `source.read(someStore)`. Works on
+/// any [StateSource] — a `Scope`, a [StoreAcc] context, or a [DerivedSource]
+/// recording context. Inside a derive body the read is tracked as a
+/// dependency by default; to opt out, call `source.read(store, listen: false)`
+/// explicitly (the shorthand has no `listen:` parameter, so the type system
+/// prevents the impossible call outside derive bodies).
+extension StoreReadX<T> on Store<T> {
+  T call(StateSource source) => source.read(this);
 }
 
-/// Concurrency strategy for an event handler registered via [StoreState.on].
+/// Concurrency strategy for a handler registered via [StoreState.on].
 ///
-/// Each strategy controls what happens when an event fires while a previous
-/// invocation of its handler is still emitting states:
+/// Each strategy controls what happens when the source fires (or a source
+/// store changes) while a previous invocation of its handler is still
+/// emitting states:
 ///
 /// - [parallel] (default): every invocation runs concurrently; their `yield`s
 ///   interleave in arrival order. Preserves caffeine ≤ 2 semantics.
-/// - [drop]: while an invocation is in flight, additional events for the same
-///   handler are dropped. Useful for "throttle until first completes".
+/// - [drop]: while an invocation is in flight, additional fires are dropped.
+///   Useful for "throttle until first completes".
 /// - [restart]: the prior invocation is cancelled and replaced. Useful for
 ///   debounced async work like search queries.
 /// - [queue]: invocations are serialized; each waits for the previous to
 ///   complete before starting. Useful for ordered side effects.
 enum Concurrency { parallel, drop, restart, queue }
 
-/// Context exposed to a [Store.accum] body. Lets the body declare event
-/// handlers, fire events, read other stores, and register dispose callbacks.
+/// Context exposed to a [Store.accum] body. Lets the body register handlers
+/// for any [Source] (an [Event] or another [Store]) and observe its own
+/// dispose lifecycle via [dispose].
 abstract interface class StoreState<S> {
   /// The current value of this store.
   S get current;
 
-  /// Registers a handler that runs whenever [event] is dispatched. The
-  /// handler returns a [Stream] of new states; each emitted state replaces
-  /// [current] and triggers downstream propagation.
+  /// Registers a handler that runs whenever [source] emits — either an
+  /// [Event] is fired or a source [Store]'s value changes. The handler
+  /// returns a [Stream] of new states; each emitted state replaces [current]
+  /// and triggers downstream propagation.
   ///
-  /// Throws [StateError] if a handler is already registered for [event] on
-  /// this store — silent overwrites are a common refactor footgun.
+  /// Multiple handlers can be registered for the same source; all run on
+  /// every emission.
   ///
-  /// See [Concurrency] for behavior when [event] fires while a prior
-  /// invocation is still emitting.
+  /// See [Concurrency] for behavior when the source emits while a prior
+  /// invocation is still running.
   void on<E>(
-    Event<E> event,
+    Source<E> source,
     Stream<S> Function(E) update, {
     Concurrency concurrency = Concurrency.parallel,
   });
 
-  /// Registers a callback to run when the scope owning this store is
-  /// disposed. Use to clean up external resources opened by the body
-  /// (timers, sockets, external [StreamSubscription]s).
-  void onDispose(void Function() callback);
+  /// A per-store event that fires once when the scope owning this store is
+  /// disposed. Subscribe via [on] to clean up external resources:
+  ///
+  /// ```dart
+  /// final timer = Timer.periodic(...);
+  /// ctx.on(ctx.dispose, (_) async* { timer.cancel(); });
+  /// ```
+  ///
+  /// Same primitive as any other event — no special callback API.
+  Event<void> get dispose;
 }
 
-/// Accum store context: combines [StoreState] (handler registration + dispose
-/// hooks), [EventSource] (firing follow-on events), and [StateSource]
+/// Accum store context: combines [StoreState] (handler registration + the
+/// dispose event), [EventSource] (firing follow-on events), and [StateSource]
 /// (reading other stores).
 abstract interface class StoreAcc<T>
     implements StoreState<T>, EventSource, StateSource {}
 
-typedef DerivedStoreBody<T> = T Function(StateSource source);
+typedef DerivedStoreBody<T> = T Function(DerivedSource source);
 typedef AccumStoreBody<T> = T Function(StoreAcc<T> source);
 
 /// A reactive value of type [T].
@@ -88,19 +104,25 @@ typedef AccumStoreBody<T> = T Function(StoreAcc<T> source);
 /// Two flavors:
 ///
 /// - [Store.derive] — lazy derived value. Its body is a pure function over a
-///   [StateSource]; every read inside the body registers a dependency, and
+///   [DerivedSource]; every read inside the body registers a dependency, and
 ///   the value is recomputed automatically when a dependency changes.
 ///   Recomputation is glitch-free: diamond-shaped dependency graphs evaluate
 ///   each downstream node at most once per propagation cycle.
 ///
 /// - [Store.accum] — event-driven stateful store. Its body runs once at scope
-///   init and registers event handlers via `ctx.on(event, handler)`. State
-///   transitions only happen in response to dispatched events.
+///   init and registers handlers via `ctx.on(source, handler)`. State
+///   transitions only happen in response to emissions.
 ///
 /// Stores have identity — two `Store` instances are equal only by reference.
 /// Don't construct a store inside a build/render function unless you mean to
 /// create a new identity each time.
-abstract interface class Store<T> implements StoreOverride {
+///
+/// Stores are also [Source]s: another accum store can react to value changes
+/// via `ctx.on(otherStore, handler)`. They are not [Event]s, though — there
+/// is no extension that lets you call a store like `store(source, value)` to
+/// mutate it. The only way to change a store's value is from inside its own
+/// handlers.
+abstract interface class Store<T> implements Source<T>, StoreOverride {
   /// Creates a lazy derived store. [body] is called whenever a recorded
   /// dependency changes; the most recent return value is cached.
   ///
@@ -114,8 +136,8 @@ abstract interface class Store<T> implements StoreOverride {
   }) = _DerivedStore;
 
   /// Creates an accum store. [body] runs once at scope init; use the
-  /// [StoreAcc] context to register `on(event, handler)` clauses, fire
-  /// follow-on events, and (optionally) register `onDispose` cleanup.
+  /// [StoreAcc] context to register `on(source, handler)` clauses, fire
+  /// follow-on events, and (optionally) subscribe to `ctx.dispose`.
   ///
   /// [debugLabel] is included in error messages. [equals], if provided,
   /// replaces `==` for change detection.
