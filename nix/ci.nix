@@ -5,6 +5,8 @@
   on = {
     push.branches = [ "master" ];
     pull_request = { };
+    # Allow manual re-runs from the Actions UI or `gh workflow run ci.yml`.
+    workflow_dispatch = { };
   };
   concurrency = {
     group = "ci-\${{ github.ref }}";
