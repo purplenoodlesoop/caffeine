@@ -29,6 +29,16 @@ let
       }
     else
       fullLock;
+
+  # On-disk pubspec.lock kept in sync with the (possibly filtered) attrset.
+  # Without this, pub.Entrypoint.ensureUpToDate sees a mismatch between
+  # pubspec.lock and .dart_tool/package_config.json and tries to re-resolve
+  # against pub.dev (no network in the sandbox).
+  filteredLockYaml = runCommand "${pname}-pubspec.lock" {
+    nativeBuildInputs = [ yq-go ];
+    passAsFile = [ "data" ];
+    data = builtins.toJSON pubspecLock;
+  } "yq -P < \"$dataPath\" > $out";
 in
 builder {
   inherit
@@ -44,9 +54,11 @@ builder {
 
   # Strip workspace metadata so dart/flutter test resolves only this package
   # instead of walking siblings (which would need a Flutter SDK or pub-get).
+  # Also rewrite pubspec.lock to match the filtered attrset.
   postPatch = ''
     sed -i '/^workspace:$/,$d' pubspec.yaml
     sed -i '/^resolution: workspace$/d' ${packageRoot}/pubspec.yaml
+    install -m 644 ${filteredLockYaml} pubspec.lock
   '';
 
   doCheck = true;
