@@ -22,8 +22,8 @@ Flutter bindings for [caffeine](https://pub.dev/packages/caffeine). Attaches rea
 
 ```yaml
 dependencies:
-  caffeine: ^2.0.0
-  flutter_caffeine: ^1.0.0
+  caffeine: ^3.0.0
+  flutter_caffeine: ^3.0.0
 ```
 
 ```dart
@@ -152,11 +152,11 @@ class CounterButtons extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(children: [
       IconButton(
-        onPressed: () => context.fire(increment, null),
+        onPressed: () => increment(Caffeine.of(context)),
         icon: const Icon(Icons.add),
       ),
       IconButton(
-        onPressed: () => context.fire(decrement, null),
+        onPressed: () => decrement(Caffeine.of(context)),
         icon: const Icon(Icons.remove),
       ),
     ]);

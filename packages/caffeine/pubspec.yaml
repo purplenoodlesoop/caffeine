@@ -3,7 +3,7 @@ description: >-
   A reactive microstore for Dart. Event-driven stateful stores, lazy derived
   state with automatic dependency tracking, glitch-free reactivity, and
   hierarchical scope-based lifecycle management.
-version: 2.0.0
+version: 3.0.0
 homepage: https://github.com/purplenoodlesoop/caffeine
 repository: https://github.com/purplenoodlesoop/caffeine
 issue_tracker: https://github.com/purplenoodlesoop/caffeine/issues

@@ -12,7 +12,9 @@ class _NodeEntry<S> {
   final Store<S> node;
   _ScopeImpl ownerScope;
   S? value;
+  bool valueInitialized = false;
   bool stale = true;
+  bool evaluating = false;
   Set<_NodeEntry> deps = {};
   Set<_NodeEntry> dependents = {};
   StreamController<S>? controller;
@@ -23,29 +25,48 @@ class _NodeEntry<S> {
     }
     deps = {};
 
-    final source = _RecordingStateSource<S>(ownerScope, node);
+    final source = _RecordingDerivedSource<S>(ownerScope, node);
     final oldValue = value;
+    final hadOld = valueInitialized;
     final newVal = node.derivedBody(source);
     value = newVal;
+    valueInitialized = true;
     stale = false;
-    if (newVal != oldValue) controller?.add(newVal);
+    final changed = !hadOld || !node.valuesEqual(newVal, oldValue);
+    if (changed) controller?.add(newVal);
   }
+}
+
+class _HandlerInfo {
+  _HandlerInfo(this.handler, this.concurrency);
+  final Function handler; // Stream<S> Function(E) erased
+  final Concurrency concurrency;
+  StreamSubscription? activeSub;
+  final List<void Function()> queue = [];
 }
 
 class _AccumEntry<S> extends _NodeEntry<S> {
   _AccumEntry(super.store, super.ownerScope);
 
-  final Map<Event, Function> handlers = {};
+  // Active handler stream subscriptions (one per running handler invocation).
   final List<StreamSubscription> subscriptions = [];
 
+  // Subscriptions opened when this store reacts to another store via
+  // `ctx.on(otherStore, ...)`. Cancelled on scope dispose.
+  final List<StreamSubscription> storeSourceSubs = [];
+
+  // Per-store synthetic dispose event. Unique identity (non-const) so each
+  // store's dispose handlers route only to that store.
+  final Event<void> disposeEvent = Event<void>(debugLabel: 'dispose');
+
   @override
-  void reevaluate() => stale = false; // accum stores update via events only
+  void reevaluate() => stale = false; // accum stores update via handlers only
 }
 
-// ── Recording StateSource ─────────────────────────────────────────────────────
+// ── Recording DerivedSource ───────────────────────────────────────────────────
 
-class _RecordingStateSource<T> implements StateSource {
-  _RecordingStateSource(this._scope, this._node);
+class _RecordingDerivedSource<T> implements DerivedSource {
+  _RecordingDerivedSource(this._scope, this._node);
 
   final _ScopeImpl _scope;
   final Store<T> _node;
@@ -81,36 +102,107 @@ class _StoreAccImpl<T> implements StoreAcc<T> {
   T get current => _entry.value as T;
 
   @override
-  void on<E>(Event<E> event, Stream<T> Function(E) update) {
-    _entry.handlers[event] = update;
-    _scope._eventIndex[event] ??= [];
-    _scope._eventIndex[event]!.add((_store, _entry));
+  Event<void> get dispose => _entry.disposeEvent;
+
+  @override
+  void on<E>(
+    Source<E> source,
+    Stream<T> Function(E) update, {
+    Concurrency concurrency = Concurrency.parallel,
+  }) {
+    final info = _HandlerInfo(update, concurrency);
+
+    if (source is Event<E>) {
+      _scope._eventIndex.putIfAbsent(source, () => []).add(
+            _BoundHandler(_store, _entry, info),
+          );
+      return;
+    }
+
+    if (source is Store<E>) {
+      // React to value changes on another store: subscribe to its stream and
+      // dispatch the handler with each new value. The owning scope of the
+      // source store may differ from `_scope`; `stream` resolves it.
+      final sub = _scope.stream(source).listen((value) {
+        _scope._dispatchHandler(_store, _entry, info, value);
+      });
+      _entry.storeSourceSubs.add(sub);
+      return;
+    }
+
+    // Source<E> is a sealed-by-convention pair (Event<E> | Store<E>); any
+    // other implementation is a programming error in caffeine itself.
+    throw StateError('Unsupported Source<$E> implementation: $source');
   }
 
   @override
   void fire<V>(Event<V> event, V value) => _scope.fire(event, value);
 
   @override
-  V read<V>(Store<V> node, {bool listen = true}) =>
-      _scope._evaluateTyped(node);
+  V read<V>(Store<V> node) => _scope._evaluateTyped(node);
+}
+
+// Tracks one handler registration in the per-scope event index.
+class _BoundHandler {
+  _BoundHandler(this.store, this.entry, this.info);
+  final Store store;
+  final _AccumEntry entry;
+  final _HandlerInfo info;
 }
 
 // ── Scope interface ───────────────────────────────────────────────────────────
 
+/// Runtime that owns the reactive graph, dispatches events, and manages
+/// store lifetimes.
+///
+/// Scopes form a tree. Child scopes are created via [Scope.fork]; a store
+/// bound to a child scope is destroyed when that child is disposed. Stores
+/// that aren't explicitly bound to any scope live at the root.
 abstract interface class Scope implements EventSource, StateSource {
+  /// Creates a root scope. Stores or events in [overrides] are bound to this
+  /// scope; substitutions (via [MappingStoreOverride]) are applied to all
+  /// descendants.
   factory Scope({StoreOverrides overrides}) = _ScopeImpl.root;
 
+  /// Creates a child scope. Stores or events in [overrides] are bound to the
+  /// child; mappings apply to descendants of the child only.
   Scope fork({StoreOverrides overrides});
 
+  /// Reads the current value of [node]. Triggers initialization if needed.
+  /// Reads outside `Store.derive` are always one-shot.
   @override
-  T read<T>(Store<T> node, {bool listen});
+  T read<T>(Store<T> node);
 
+  /// Dispatches [event] with [value]. Routes to the scope that owns [event]
+  /// (or root, if unbound) and broadcasts the event through that subtree.
   @override
   void fire<T>(Event<T> event, T value);
 
+  /// Subscribes to [event] dispatches reaching this scope. The handler runs
+  /// synchronously when the event is fired, in addition to any store
+  /// handlers registered for the same event. Cancel the subscription to
+  /// stop receiving events.
+  StreamSubscription<T> listen<T>(Event<T> event, void Function(T) handler);
+
+  /// Returns a broadcast stream of [node]'s value changes. Each event flush
+  /// emits at most the final value per node per batch.
   Stream<T> stream<T>(Store<T> node);
 
+  /// Disposes this scope and all descendants. Fires each accum store's
+  /// `ctx.dispose` event, cancels subscriptions, and closes value streams.
   void dispose();
+
+  /// True once [dispose] has been called.
+  bool get isDisposed;
+
+  /// Stores explicitly bound to this scope (via overrides). Diagnostic only.
+  Iterable<Store> get debugBoundStores;
+
+  /// Events explicitly bound to this scope (via overrides). Diagnostic only.
+  Iterable<Event> get debugBoundEvents;
+
+  /// Child scopes forked from this scope. Diagnostic only.
+  Iterable<Scope> get debugChildren;
 }
 
 // ── _ScopeImpl ────────────────────────────────────────────────────────────────
@@ -145,9 +237,26 @@ class _ScopeImpl implements Scope {
   final Set<Store> _bound = {};
   final Set<Event> _boundEvents = {};
   final Map<Store, _NodeEntry> _entries = {};
-  final Map<Event, List<(Store, _AccumEntry)>> _eventIndex = {};
+  final Map<Event, List<_BoundHandler>> _eventIndex = {};
+  final Map<Event, StreamController> _eventListenerControllers = {};
   final List<_ScopeImpl> _children = [];
   bool _disposed = false;
+
+  @override
+  bool get isDisposed => _disposed;
+
+  @override
+  Iterable<Store> get debugBoundStores => List.unmodifiable(_bound);
+
+  @override
+  Iterable<Event> get debugBoundEvents => List.unmodifiable(_boundEvents);
+
+  @override
+  Iterable<Scope> get debugChildren => List.unmodifiable(_children);
+
+  void _checkNotDisposed() {
+    if (_disposed) throw StateError('Scope is disposed');
+  }
 
   // ── Batch flush (meaningful at root; children forward to _root) ───────────
 
@@ -181,7 +290,6 @@ class _ScopeImpl implements Scope {
     return _parent?._findExistingEntry(store);
   }
 
-  // Returns true if potentialAncestor is this scope or an ancestor of it.
   bool _isAncestorOrEqual(_ScopeImpl potentialAncestor) {
     _ScopeImpl? cursor = this;
     while (cursor != null) {
@@ -199,10 +307,8 @@ class _ScopeImpl implements Scope {
     return s;
   }
 
-  // Accum stores always go to root when unbound (they register event handlers
-  // in their scope's _eventIndex). Derived stores are promoted to the deepest
-  // dep-owner scope that is an ancestor of this scope (see _promoteIfNeeded).
-  // If already evaluated, _findExistingEntry returns the promoted location.
+  // Accum stores always go to root when unbound. Derived stores are promoted
+  // to the deepest dep-owner scope that is an ancestor of this scope.
   _ScopeImpl _ownerFor(Store store) {
     final found = _findOwner(store);
     if (found != null) return found;
@@ -212,12 +318,8 @@ class _ScopeImpl implements Scope {
     return this;
   }
 
-  // After a derived store is evaluated, move its entry to the deepest dep-owner
-  // scope that is an ancestor-or-equal of this scope. This ensures that all
-  // descendants reading the same derived store share one instance.
   void _promoteIfNeeded(Store store, _NodeEntry entry) {
     if (entry.deps.isEmpty) {
-      // Constant derived stores (no deps) live on root, like unbound accum stores.
       if (this != _root) {
         _entries.remove(store);
         _root._entries[store] = entry;
@@ -265,9 +367,9 @@ class _ScopeImpl implements Scope {
       final ctx = _StoreAccImpl<S>(this, entry, store);
       final initialValue = store.accumBody(ctx);
       entry.value = initialValue;
+      entry.valueInitialized = true;
       entry.stale = false;
     } else {
-      // Derived stores are initialized lazily on first read.
       _entries[store] = _NodeEntry<S>(store, this);
     }
   }
@@ -280,20 +382,30 @@ class _ScopeImpl implements Scope {
     _ensureIn(owner, effective);
     final entry = owner._entries[effective]!;
 
+    if (entry.evaluating) {
+      throw StateError(
+        'Cycle detected: $effective depends on itself (directly or transitively).',
+      );
+    }
+
     if (!entry.stale) return entry.value as T;
 
-    // Only derived stores can be stale. Evaluate without emitting (no
-    // controller notification here — that's only for propagation-triggered
-    // recomputes in reevaluate).
-    for (final dep in entry.deps) {
-      dep.dependents.remove(entry);
-    }
-    entry.deps = {};
+    entry.evaluating = true;
+    try {
+      for (final dep in entry.deps) {
+        dep.dependents.remove(entry);
+      }
+      entry.deps = {};
 
-    final source = _RecordingStateSource<T>(owner, effective);
-    final newValue = effective.derivedBody(source);
-    entry.value = newValue;
-    entry.stale = false;
+      final source = _RecordingDerivedSource<T>(owner, effective);
+      final newValue = effective.derivedBody(source);
+      entry.value = newValue;
+      entry.valueInitialized = true;
+      entry.stale = false;
+    } finally {
+      entry.evaluating = false;
+    }
+
     if (owner == this) owner._promoteIfNeeded(effective, entry);
     return entry.value as T;
   }
@@ -344,7 +456,10 @@ class _ScopeImpl implements Scope {
   // ── Public API ────────────────────────────────────────────────────────────
 
   @override
-  T read<T>(Store<T> node, {bool listen = true}) => _evaluateTyped(node);
+  T read<T>(Store<T> node) {
+    _checkNotDisposed();
+    return _evaluateTyped(node);
+  }
 
   _ScopeImpl? _findEventOwner(Event event) {
     if (_boundEvents.contains(event)) return this;
@@ -352,12 +467,16 @@ class _ScopeImpl implements Scope {
   }
 
   void _localFire<T>(Event<T> event, T value) {
+    if (_disposed) return;
     final entries = _eventIndex[event];
-    if (entries == null) return;
-    for (final (store, entry) in entries) {
-      final handler = entry.handlers[event]!;
-      final stream = (handler as Stream<dynamic> Function(T))(value);
-      _listenHandlerStream(store, entry, stream);
+    if (entries != null) {
+      for (final bh in entries) {
+        _dispatchHandler(bh.store, bh.entry, bh.info, value);
+      }
+    }
+    final controller = _eventListenerControllers[event];
+    if (controller != null && !controller.isClosed) {
+      controller.add(value);
     }
   }
 
@@ -371,13 +490,53 @@ class _ScopeImpl implements Scope {
 
   @override
   void fire<T>(Event<T> event, T value) {
+    _checkNotDisposed();
     final owner = _findEventOwner(event);
     (owner ?? _root)._broadcastFire(event, value);
   }
 
-  void _listenHandlerStream<S>(
+  @override
+  StreamSubscription<T> listen<T>(Event<T> event, void Function(T) handler) {
+    _checkNotDisposed();
+    final controller = _eventListenerControllers.putIfAbsent(
+      event,
+      () => StreamController<T>.broadcast(sync: true),
+    );
+    return (controller.stream as Stream<T>).listen(handler);
+  }
+
+  void _dispatchHandler<S, E>(
     Store<S> store,
     _AccumEntry<S> entry,
+    _HandlerInfo info,
+    E value,
+  ) {
+    final handler = info.handler as Stream<S> Function(E);
+    switch (info.concurrency) {
+      case Concurrency.parallel:
+        _subscribeHandler(store, entry, info, handler(value));
+      case Concurrency.drop:
+        if (info.activeSub != null) return;
+        _subscribeHandler(store, entry, info, handler(value));
+      case Concurrency.restart:
+        info.activeSub?.cancel();
+        info.activeSub = null;
+        _subscribeHandler(store, entry, info, handler(value));
+      case Concurrency.queue:
+        if (info.activeSub != null) {
+          info.queue.add(
+            () => _subscribeHandler(store, entry, info, handler(value)),
+          );
+        } else {
+          _subscribeHandler(store, entry, info, handler(value));
+        }
+    }
+  }
+
+  void _subscribeHandler<S>(
+    Store<S> store,
+    _AccumEntry<S> entry,
+    _HandlerInfo info,
     Stream<S> stream,
   ) {
     final owner = _findOwner(store) ?? _root;
@@ -385,10 +544,13 @@ class _ScopeImpl implements Scope {
     sub = stream.listen(
       (newState) {
         final old = entry.value;
-        entry.value = newState; // synchronous — read() always returns current value
-        if (newState != old) {
+        entry.value = newState;
+        final changed = !store.valuesEqual(newState, old);
+        if (changed) {
           final root = owner._root;
-          if (entry.controller != null) root._pendingEmissions[entry] = newState;
+          if (entry.controller != null) {
+            root._pendingEmissions[entry] = newState;
+          }
           root._pendingPropagation.add((store, owner));
           if (!root._flushScheduled) {
             root._flushScheduled = true;
@@ -397,21 +559,30 @@ class _ScopeImpl implements Scope {
         }
       },
       onError: Zone.current.handleUncaughtError,
-      onDone: () => entry.subscriptions.remove(sub),
+      onDone: () {
+        entry.subscriptions.remove(sub);
+        if (identical(info.activeSub, sub)) info.activeSub = null;
+        if (info.queue.isNotEmpty) {
+          final next = info.queue.removeAt(0);
+          next();
+        }
+      },
     );
+    if (info.concurrency != Concurrency.parallel) info.activeSub = sub;
     entry.subscriptions.add(sub);
   }
 
   void _flushBatch() {
     _flushScheduled = false;
 
-    // Notify accum store stream subscribers — Map ensures only final value per store per batch.
     for (final MapEntry(:key, :value) in _pendingEmissions.entries) {
-      (key.controller as StreamController).add(value);
+      final controller = key.controller;
+      if (controller != null && !controller.isClosed) {
+        controller.add(value);
+      }
     }
     _pendingEmissions.clear();
 
-    // One propagation pass per changed store (Set deduplicates multiple fires).
     final pending = Set.of(_pendingPropagation);
     _pendingPropagation.clear();
     for (final (store, scope) in pending) {
@@ -421,9 +592,13 @@ class _ScopeImpl implements Scope {
 
   @override
   Stream<T> stream<T>(Store<T> node) {
+    _checkNotDisposed();
+    // Force evaluation so derived stores set up their dependency edges —
+    // without this, subscribers receive no events because nothing propagates
+    // until the store is first read.
+    _evaluateTyped(node);
     final effective = _resolveEffective(node);
     final owner = _ownerFor(effective);
-    _ensureIn(owner, effective);
     final entry = owner._entries[effective]!;
     entry.controller ??= StreamController<T>.broadcast(sync: true);
     return (entry.controller as StreamController<T>).stream;
@@ -431,6 +606,7 @@ class _ScopeImpl implements Scope {
 
   @override
   Scope fork({StoreOverrides overrides = const {}}) {
+    _checkNotDisposed();
     final child = _ScopeImpl(overrides: overrides, parent: this);
     _children.add(child);
     return child;
@@ -441,26 +617,44 @@ class _ScopeImpl implements Scope {
 
   void _disposeImpl({required bool unregister}) {
     if (_disposed) return;
-    _disposed = true;
     if (unregister) _parent?._children.remove(this);
-    for (final child in _children) {
+    for (final child in List.of(_children)) {
       child._disposeImpl(unregister: false);
     }
+    // Fire each accum store's dispose event BEFORE clearing the index, so
+    // handlers registered via `ctx.on(ctx.dispose, ...)` are dispatched. The
+    // handler streams are async, so cleanup side effects (e.g. timer.cancel())
+    // run as microtasks after this scope's teardown completes. That is fine:
+    // they target external resources, not scope state.
     for (final entry in _entries.values) {
       if (entry is _AccumEntry) {
+        _localFire(entry.disposeEvent, null);
+      }
+    }
+    _disposed = true;
+    for (final entry in _entries.values) {
+      if (entry is _AccumEntry) {
+        for (final sub in entry.storeSourceSubs) {
+          sub.cancel();
+        }
         for (final sub in entry.subscriptions) {
           sub.cancel();
         }
       }
       entry.controller?.close();
     }
+    for (final controller in _eventListenerControllers.values) {
+      controller.close();
+    }
     _entries.clear();
     _eventIndex.clear();
+    _eventListenerControllers.clear();
     _bound.clear();
     _overrides.clear();
     _boundEvents.clear();
     _pendingEmissions.clear();
     _pendingPropagation.clear();
+    _children.clear();
   }
 }
 

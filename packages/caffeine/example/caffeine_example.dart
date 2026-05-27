@@ -1,38 +1,48 @@
 import 'package:caffeine/caffeine.dart';
 
-typedef LoggerState = ({int logsCount});
+// Events
+const increment = Event<void>(debugLabel: 'increment');
+const setBy = Event<int>(debugLabel: 'setBy');
+const resetAll = Event<void>(debugLabel: 'resetAll');
 
-final logMessage = Event<String>();
-
-final logger = Store<LoggerState>.accum((ctx) {
-  ctx.on(logMessage, (msg) async* {
-    print(msg);
-    yield (logsCount: ctx.current.logsCount + 1);
-  });
-  return (logsCount: 0);
-});
-
-typedef RemoteConfigState = ({String apiUrl, int number});
-
-final loadRemoteConfig = Event<void>();
-
-Future<RemoteConfigState> fetchRemoteConfig() => throw 'hello';
-
-final remoteConfig = Store<RemoteConfigState>.accum((ctx) {
-  ctx.on(loadRemoteConfig, (_) async* {
-    logMessage(ctx, 'Requesting remote config...');
-    yield await fetchRemoteConfig();
-  });
-  loadRemoteConfig(ctx, null);
-
-  return (apiUrl: 'https://example.com/api', number: 42);
-});
-
-final systemState = Store.derive(
-  (source) => (
-    url: remoteConfig(source).apiUrl,
-    doubledMessages: logger(source).logsCount * 2,
-  ),
+// Accum store: counter with three handlers.
+final counter = Store<int>.accum(
+  (ctx) {
+    ctx.on(increment, (_) async* {
+      yield ctx.current + 1;
+    });
+    ctx.on(setBy, (delta) async* {
+      yield ctx.current + delta;
+    });
+    ctx.on(resetAll, (_) async* {
+      yield 0;
+    });
+    return 0;
+  },
+  debugLabel: 'counter',
 );
 
-void main() {}
+// Derived store: doubled view of counter. Recomputed automatically.
+final doubled = counter.select((c) => c * 2, debugLabel: 'doubled');
+
+Future<void> main() async {
+  // resetAll is bound to the root scope — fires from anywhere broadcast here.
+  final root = Scope(overrides: {resetAll});
+
+  // Listen for state changes.
+  root.stream(counter).listen((v) => print('counter -> $v'));
+  root.stream(doubled).listen((v) => print('doubled -> $v'));
+
+  // Fire some events.
+  increment(root);
+  increment(root);
+  setBy(root, 5);
+  await Future.delayed(Duration.zero);
+  print('counter is ${root.read(counter)}, doubled is ${root.read(doubled)}');
+
+  resetAll(root);
+  await Future.delayed(Duration.zero);
+  print('after reset: counter=${root.read(counter)}');
+
+  root.dispose();
+}
