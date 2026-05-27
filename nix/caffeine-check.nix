@@ -7,8 +7,9 @@ mkCheck {
   src = ../.;
   packageRoot = "packages/caffeine";
   builder = buildDartApplication;
-  # mk-check rewrites pubspec.lock to match the filtered attrset, so
-  # pub.Entrypoint.ensureUpToDate is satisfied without touching pub.dev.
-  testCommand = "dart run test:test --reporter expanded";
+  # packageRun is a bash helper dartConfigHook installs; it invokes the test
+  # package's bin/test.dart directly via `dart --packages=...`, completely
+  # bypassing pub.Entrypoint.ensureUpToDate (and the pub.dev network probe).
+  testCommand = "packageRun test --reporter expanded";
   filterSdk = true;
 }

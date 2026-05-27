@@ -52,12 +52,13 @@ builder {
   dontDartBuild = true;
   dontDartInstall = true;
 
-  # Strip workspace metadata so dart/flutter test resolves only this package
-  # instead of walking siblings (which would need a Flutter SDK or pub-get).
-  # Also rewrite pubspec.lock to match the filtered attrset.
+  # Pin the on-disk lockfile to the filtered attrset (preConfigure later
+  # replaces it with a JSON serialization of the same attrset; either way
+  # it stays consistent with what dartConfigHook builds). We do NOT strip
+  # the workspace here — dartConfigHook needs the workspace declaration
+  # so workspacePackageConfigScript adds member entries (caffeine,
+  # flutter_caffeine, flutter_caffeine_example) to package_config.json.
   postPatch = ''
-    sed -i '/^workspace:$/,$d' pubspec.yaml
-    sed -i '/^resolution: workspace$/d' ${packageRoot}/pubspec.yaml
     install -m 644 ${filteredLockYaml} pubspec.lock
   '';
 
@@ -69,12 +70,25 @@ builder {
   '';
 
   doCheck = true;
-  # dart/flutter test rewrite .dart_tool/package_config.json on startup; copy
-  # to a writable dir so the symlinks back into /nix/store don't block it.
+  # `dart test` / `flutter test` start by calling pub.Entrypoint.ensureUpToDate
+  # which hits pub.dev (no network in the sandbox). The dartConfigHook ships a
+  # `packageRun` bash helper that invokes `dart --packages=... <pkg>/bin/<name>.dart`
+  # directly, skipping pub. Use it where possible (see caffeine-check.nix).
+  # `cp -rL` first so the symlinked .dart_tool/package_config.json is writable.
   checkPhase = ''
     runHook preCheck
     cp -rL . "$TMPDIR/src"
     chmod -R u+w "$TMPDIR/src"
+    # Strip workspace metadata only AFTER dartConfigHook has populated
+    # package_config.json — otherwise the workspace members won't get added.
+    # Without stripping, the test runner would re-traverse the workspace and
+    # try to pub-get the Flutter example.
+    sed -i '/^workspace:$/,$d' "$TMPDIR/src/pubspec.yaml"
+    sed -i '/^resolution: workspace$/d' "$TMPDIR/src/${packageRoot}/pubspec.yaml"
+    # dartConfigHook drops .dart_tool/ at the workspace root, but tests run
+    # from the package dir, and packageRun's `jq .dart_tool/package_config.json`
+    # is path-relative. Copy it into the package dir so packageRun resolves.
+    cp -rL "$TMPDIR/src/.dart_tool" "$TMPDIR/src/${packageRoot}/"
     cd "$TMPDIR/src/${packageRoot}"
     HOME=$TMPDIR ${testCommand}
     runHook postCheck

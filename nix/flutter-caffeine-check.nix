@@ -7,7 +7,7 @@ mkCheck {
   src = ../.;
   packageRoot = "packages/flutter_caffeine";
   builder = flutter.buildFlutterApplication;
-  # `flutter test` invokes `flutter pub get` first; --no-pub (subcommand
-  # flag, not global) skips that so the sandbox stays offline.
+  # mk-check runs `dart pub get --offline` first; --no-pub then keeps
+  # `flutter test` from re-fetching.
   testCommand = "flutter test --no-pub --reporter expanded";
 }
