@@ -6,11 +6,12 @@ concurrency:
   cancel-in-progress: true
   group: ci-${{ github.ref }}
 jobs:
-  flake-check:
-    name: nix flake check
+  check:
+    name: ${{ matrix.name }}
+    needs: matrix
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -20,9 +21,33 @@ jobs:
         determinate: false
     - name: Magic Nix Cache
       uses: DeterminateSystems/magic-nix-cache-action@v13
-    - name: Flake check
-      run: nix flake check --print-build-logs
+    - name: Build check
+      run: nix build -L '.#${{ matrix.attr }}'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.matrix.outputs.matrix) }}
     timeout-minutes: 30
+  matrix:
+    name: matrix
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Install Nix
+      uses: DeterminateSystems/nix-installer-action@v22
+      with:
+        determinate: false
+    - id: set-matrix
+      name: Generate matrix
+      run: 'set -Eeu
+
+        matrix="$(nix eval --json ''.#githubActions.matrix'')"
+
+        echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+        '
 name: ci
 'on':
   pull_request: {}

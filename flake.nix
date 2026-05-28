@@ -8,13 +8,19 @@
       url = "github:purplenoodlesoop/core-flake";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    nix-github-actions = {
+      url = "github:nix-community/nix-github-actions";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
     {
+      self,
       nixpkgs,
       flake-utils,
       core-flake,
+      nix-github-actions,
       ...
     }:
     let
@@ -90,6 +96,11 @@
           };
         }
       );
+      # Restrict to Linux/x86_64 so darwin checks (where flutter-caffeine is
+      # gated out) don't appear in the GHA matrix.
+      githubActions = nix-github-actions.lib.mkGithubMatrix {
+        checks = nixpkgs.lib.getAttrs [ "x86_64-linux" ] self.checks;
+      };
     in
-    nixpkgs.lib.recursiveUpdate base perSystem;
+    nixpkgs.lib.recursiveUpdate base perSystem // { inherit githubActions; };
 }
