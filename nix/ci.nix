@@ -1,3 +1,28 @@
+let
+  # Single source of truth for action versions.
+  actions = {
+    checkout = "actions/checkout@v4";
+    installNix = "DeterminateSystems/nix-installer-action@v22";
+    magicCache = "DeterminateSystems/magic-nix-cache-action@v13";
+  };
+
+  # Steps reused across jobs.
+  checkoutStep = {
+    name = "Checkout";
+    uses = actions.checkout;
+  };
+
+  installNixStep = {
+    name = "Install Nix";
+    uses = actions.installNix;
+    "with".determinate = false;
+  };
+
+  magicCacheStep = {
+    name = "Magic Nix Cache";
+    uses = actions.magicCache;
+  };
+in
 {
   name = "ci";
   # YAML's `on:` would otherwise serialize as a boolean key; the YAML formatter
@@ -19,15 +44,8 @@
       runs-on = "ubuntu-latest";
       outputs.matrix = "\${{ steps.set-matrix.outputs.matrix }}";
       steps = [
-        {
-          name = "Checkout";
-          uses = "actions/checkout@v4";
-        }
-        {
-          name = "Install Nix";
-          uses = "DeterminateSystems/nix-installer-action@v22";
-          "with".determinate = false;
-        }
+        checkoutStep
+        installNixStep
         {
           id = "set-matrix";
           name = "Generate matrix";
@@ -40,7 +58,7 @@
       ];
     };
 
-    # Job 2: one runner per flake check.
+    # Job 2: one runner per flake check, driven by the matrix above.
     check = {
       name = "\${{ matrix.name }}";
       needs = "matrix";
@@ -52,19 +70,9 @@
         matrix = "\${{ fromJSON(needs.matrix.outputs.matrix) }}";
       };
       steps = [
-        {
-          name = "Checkout";
-          uses = "actions/checkout@v4";
-        }
-        {
-          name = "Install Nix";
-          uses = "DeterminateSystems/nix-installer-action@v22";
-          "with".determinate = false;
-        }
-        {
-          name = "Magic Nix Cache";
-          uses = "DeterminateSystems/magic-nix-cache-action@v13";
-        }
+        checkoutStep
+        installNixStep
+        magicCacheStep
         {
           name = "Build check";
           run = "nix build -L '.#\${{ matrix.attr }}'";
