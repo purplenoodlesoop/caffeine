@@ -57,7 +57,7 @@ Pass `overrides` to inject stores or bind global events:
 ```dart
 Caffeine(
   scopeFactory: (_) => Scope(overrides: {
-    MappingStoreOverride(from: apiStore, to: productionApiStore),
+    apiStore.overrideWith(productionApiStore),
     globalSaveEvent,  // bound here — fires broadcast to all descendants
   }),
   child: const MyApp(),
@@ -170,13 +170,13 @@ If the event is bound to an ancestor scope, the fire automatically routes there 
 
 ## Dependency Injection and Testing
 
-`MappingStoreOverride` replaces one store with another within a scope's subtree. Any `context.state(originalStore)` call inside transparently reads from the replacement:
+`originalStore.overrideWith(replacement)` creates a `MappingStoreOverride`, which replaces one store with another within a scope's subtree. Any `context.state(originalStore)` call inside transparently reads from the replacement:
 
 ```dart
 await tester.pumpWidget(
   Caffeine(
     scopeFactory: (_) => Scope(overrides: {
-      MappingStoreOverride(from: apiStore, to: fakeApiStore),
+      apiStore.overrideWith(fakeApiStore),
     }),
     child: const FeatureWidget(),
   ),

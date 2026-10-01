@@ -1,3 +1,19 @@
+## Unreleased
+
+### Breaking
+- **`MappingStoreOverride` is created with `from.overrideWith(to)`.** The public constructor is gone: it inferred `T` as the least upper bound of both stores, so `MappingStoreOverride(from: Store<int>, to: Store<Object>)` compiled and threw a cast error on the first read. `overrideWith` fixes `T` from the receiver, so a mismatched replacement is a compile error.
+- **`Source<T>` is sealed.** `Event` and `Store` are its only subtypes; implementing it outside caffeine no longer compiles (it used to throw `StateError` in `ctx.on`).
+- **`fire` returns `Future<void>`.** `Scope.fire`, `StoreAcc.fire`, the `event(source[, value])` shorthands, and `context.fire` complete once every handler invocation the call started has finished (or was dropped or cancelled) and its states have propagated. `await increment(scope)` replaces `await Future.microtask(() {})` workarounds. Implementations of `EventSource` must update their signature; callers that ignore the result are unaffected unless they enable `unawaited_futures`.
+- **`Event` has no `const` constructor.** Dart canonicalizes const instances with equal arguments, so `const a = Event<void>(); const b = Event<void>();` were the same event — firing one triggered the other's handlers. Declare events with `final`.
+- **Streams skip values that revert within a batch.** A flush emits only when a store's settled value differs from the last value it emitted.
+
+### Fixed
+- **Reads between yields are consistent.** A changed store now invalidates its derived dependents immediately instead of at the next flush, so `scope.read(derived)` can no longer return a value computed from a source's previous state while the source already shows the new one. Unobserved derived stores now stay lazy during flushes instead of being recomputed eagerly.
+
+### Docs
+- Restored the event-firing examples in the README that the 3.0.0 release left as `\1(\2);` placeholders, and fixed the install snippet's version.
+- Documented that nullable-payload events (`Event<int?>`) have no two-argument shorthand, and that `event(scope)` on them resolves to the void shorthand and fires `null`.
+
 ## 3.0.0 — 2026-05-28
 
 ### Breaking

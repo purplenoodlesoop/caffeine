@@ -2,8 +2,8 @@ import 'package:caffeine/caffeine.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_caffeine/flutter_caffeine.dart';
 
-const increment = Event<void>(debugLabel: 'increment');
-const resetAll = Event<void>(debugLabel: 'resetAll');
+final increment = Event<void>(debugLabel: 'increment');
+final resetAll = Event<void>(debugLabel: 'resetAll');
 
 final counter = Store<int>.accum((ctx) {
   ctx.on(increment, (_) async* {

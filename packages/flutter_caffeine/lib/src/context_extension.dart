@@ -41,5 +41,8 @@ extension CaffeineBuildContextX on BuildContext {
   }
 
   /// Fires [event] with [value] through the nearest [Caffeine] ancestor's scope.
-  void fire<T>(Event<T> event, T value) => Caffeine.of(this).fire(event, value);
+  /// The future completes once the resulting state has settled — see
+  /// [Scope.fire].
+  Future<void> fire<T>(Event<T> event, T value) =>
+      Caffeine.of(this).fire(event, value);
 }

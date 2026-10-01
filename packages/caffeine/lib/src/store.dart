@@ -1,16 +1,34 @@
 import 'package:meta/meta.dart';
 
-import 'event.dart';
 import 'override.dart';
+
+part 'event.dart';
 
 /// Substitutes one store for another within a [Scope]'s subtree. Any read of
 /// [from] is transparently resolved to [to]. Used for dependency injection
 /// and testing.
+///
+/// Created with [StoreOverrideWithX.overrideWith]: `from.overrideWith(to)`.
+/// There is no public constructor — with one, `T` would be inferred as the
+/// least upper bound of both stores, so `from: Store<int>, to: Store<Object>`
+/// would compile and fail with a cast error on the first read.
 final class MappingStoreOverride<T> implements StoreOverride {
-  const MappingStoreOverride({required this.from, required this.to});
+  const MappingStoreOverride._(this.from, this.to);
 
   final Store<T> from;
   final Store<T> to;
+}
+
+/// Sugar: `realStore.overrideWith(fakeStore)` creates a
+/// [MappingStoreOverride]. `T` is fixed by the receiver, so the replacement
+/// must produce the same type.
+///
+/// ```dart
+/// final testScope = Scope(overrides: {apiStore.overrideWith(fakeApiStore)});
+/// ```
+extension StoreOverrideWithX<T> on Store<T> {
+  MappingStoreOverride<T> overrideWith(Store<T> replacement) =>
+      MappingStoreOverride._(this, replacement);
 }
 
 /// Read API outside `Store.derive` bodies. Implemented by `Scope` and by the
