@@ -19,6 +19,7 @@ A reactive microstore library for Dart with managed side effects. Caffeine gives
   - [Cross-Store Dispatch](#cross-store-dispatch)
   - [Initial Effects](#initial-effects)
   - [Async Effects](#async-effects)
+  - [Awaiting Events](#awaiting-events)
 - [Derived State in Depth](#derived-state-in-depth)
   - [Dependency Tracking](#dependency-tracking)
   - [Update Compression — Diamond Problem](#update-compression--diamond-problem)
@@ -32,7 +33,7 @@ A reactive microstore library for Dart with managed side effects. Caffeine gives
 
 ```yaml
 dependencies:
-  caffeine: ^2.0.0
+  caffeine: ^3.0.0
 ```
 
 ```dart
@@ -68,8 +69,7 @@ final scope = Scope();
 print(scope.read(counterStore));  // 0
 print(scope.read(doubledCount));  // 0
 
-\1(\2);
-await Future.microtask(() {});
+await increment(scope);  // completes once the new state has settled
 
 print(scope.read(counterStore));  // 1
 print(scope.read(doubledCount));  // 2
@@ -96,9 +96,11 @@ final loadUser   = Event<int>();    // carries a user ID
 The `EventSourceX` extension makes every `Event<T>` callable as a shorthand for `scope.fire(event, value)`:
 
 ```dart
-\1(\2);   // preferred — same as scope.\1(\2)
+increment(scope);         // preferred — same as scope.fire(increment, null)
 setName(scope, 'Alice');  // preferred — same as scope.fire(setName, 'Alice')
 ```
+
+Events with a nullable payload (`Event<String?>`) have no two-argument shorthand — fire them explicitly with `scope.fire(event, value)`. Dart treats `void` and `Object?` as the same type when picking an extension, so a nullable-payload shorthand would make every `Event<void>` call ambiguous. The flip side: `nullableEvent(scope)` resolves to the void shorthand and fires `null`, so prefer the explicit form whenever `null` is a meaningful value.
 
 ---
 
@@ -170,7 +172,7 @@ final scope = Scope();
 | Method | Description |
 |---|---|
 | `scope.read(store)` | Read the current value of a store. Initializes it on first access. |
-| `scope.fire(event, value)` | Fire an event. Triggers all registered handlers in scope. |
+| `scope.fire(event, value)` | Fire an event. Triggers all registered handlers in scope. Returns a `Future` that completes once the state has settled (see [Awaiting Events](#awaiting-events)). |
 | `scope.stream(store)` | Returns a `Stream<T>` that emits on every value change. |
 | `scope.fork({StoreOverrides overrides})` | Create a child scope (see [Scope Forking](#scope-lifecycle-and-forking)). |
 | `scope.dispose()` | Dispose the scope and all its children. |
@@ -187,11 +189,11 @@ final scope = Scope();
 scope.fork(overrides: {counterStore})
 ```
 
-**`MappingStoreOverride<T>`** — redirects reads of one store to another within this scope and its descendants:
+**`MappingStoreOverride<T>`**, created with `from.overrideWith(to)` — redirects reads of one store to another within this scope and its descendants. The replacement must have the same value type as the original; a mismatch is a compile error:
 
 ```dart
 scope.fork(overrides: {
-  MappingStoreOverride(from: realApiStore, to: fakeApiStore),
+  realApiStore.overrideWith(fakeApiStore),
 })
 ```
 
@@ -271,7 +273,7 @@ final configStore = Store<Config>.accum((ctx) {
     yield config;
   });
 
-  \1(\2);  // fires immediately on init
+  loadConfig(ctx);  // fires immediately on init
   return Config.empty();
 });
 ```
@@ -295,6 +297,27 @@ ctx.on(submit, (_) async* {
   }
 });
 ```
+
+---
+
+### Awaiting Events
+
+Handlers are `async*` generators, and Dart delivers their `yield`s asynchronously — so right after `fire` returns, state has not changed yet. `fire` (and the `event(scope)` shorthand) returns a `Future<void>` that completes once every handler invocation it started has finished and the resulting states have propagated to derived stores and streams:
+
+```dart
+increment(scope);
+scope.read(counterStore);   // still the old value
+
+await increment(scope);
+scope.read(counterStore);   // updated; streams have already emitted
+```
+
+- A handler dropped by `Concurrency.drop`, or cancelled by `restart` or by disposing the scope, counts as finished.
+- A follow-up event fired from inside a handler is included only if the handler awaits it: `await saved(ctx, id);`.
+- Handler errors are reported to the zone, not through this future.
+- Before the future completes, reads are still consistent: a derived store is invalidated the moment one of its sources changes, so it never pairs a new source value with an old derived one.
+
+Fire-and-forget is fine — the future never needs to be awaited.
 
 ---
 
@@ -366,17 +389,16 @@ final root  = Scope();
 final child = root.fork(overrides: {counterStore});
 
 // counterStore lives in child, not root.
-\1(\2);
-await Future.microtask(() {});
+await increment(child);
 
 child.dispose(); // counterStore is disposed here; root is unaffected.
 ```
 
-**`MappingStoreOverride`** redirects store reads within a scope without affecting the original:
+**`store.overrideWith(replacement)`** redirects store reads within a scope without affecting the original:
 
 ```dart
 final testScope = Scope(overrides: {
-  MappingStoreOverride(from: apiStore, to: fakeApiStore),
+  apiStore.overrideWith(fakeApiStore),
 });
 // All reads of apiStore within testScope transparently return fakeApiStore.
 ```
@@ -403,14 +425,14 @@ final root = Scope(overrides: {resetAll});
 final leftScope  = root.fork(overrides: {counterStore});
 final rightScope = root.fork(overrides: {counterStore});
 
-\1(\2);  // broadcasts to all descendants
+resetAll(root);  // broadcasts to all descendants
 ```
 
 **Firing from a descendant** routes to the owning scope and broadcasts:
 
 ```dart
 final grandChild = leftScope.fork();
-\1(\2);  // routes to root, broadcasts to all descendants
+resetAll(grandChild);  // routes to root, broadcasts to all descendants
 ```
 
 **Binding to an intermediate scope** makes the event semi-global — it broadcasts only within that scope's subtree:
@@ -420,7 +442,7 @@ final localReset = Event<void>();
 
 // localReset only broadcasts within leftScope and its children.
 final leftScope = root.fork(overrides: {counterStore, localReset});
-\1(\2);  // rightScope is unaffected
+localReset(leftScope);  // rightScope is unaffected
 ```
 
 **Unbound events** broadcast from root, so all scopes in the tree receive them.

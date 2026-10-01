@@ -1,9 +1,9 @@
 import 'package:caffeine/caffeine.dart';
 
 // Events
-const increment = Event<void>(debugLabel: 'increment');
-const setBy = Event<int>(debugLabel: 'setBy');
-const resetAll = Event<void>(debugLabel: 'resetAll');
+final increment = Event<void>(debugLabel: 'increment');
+final setBy = Event<int>(debugLabel: 'setBy');
+final resetAll = Event<void>(debugLabel: 'resetAll');
 
 // Accum store: counter with three handlers.
 final counter = Store<int>.accum(

@@ -5,7 +5,6 @@
 /// and transparent [MappingStoreOverride]s for dependency injection.
 library;
 
-export 'src/event.dart' show Event, EventSource, EventSourceX, EventVoidX, Source;
 export 'src/override.dart' show StoreOverride, StoreOverrides;
 export 'src/scope.dart' show Scope;
 export 'src/store.dart'
@@ -14,10 +13,16 @@ export 'src/store.dart'
         Concurrency,
         DerivedSource,
         DerivedStoreBody,
+        Event,
+        EventSource,
+        EventSourceX,
+        EventVoidX,
         MappingStoreOverride,
+        Source,
         StateSource,
         Store,
         StoreAcc,
+        StoreOverrideWithX,
         StoreReadX,
         StoreSelectX,
         StoreState;

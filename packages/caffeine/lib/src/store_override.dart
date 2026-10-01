@@ -1,2 +1,2 @@
 export 'override.dart' show StoreOverride, StoreOverrides;
-export 'store.dart' show MappingStoreOverride;
+export 'store.dart' show MappingStoreOverride, StoreOverrideWithX;

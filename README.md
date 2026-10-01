@@ -54,8 +54,8 @@ Flutter bindings that attach caffeine scopes to the widget tree with zero boiler
 ```dart
 // ── Stores ────────────────────────────────────────────────────────────────────
 
-const increment = Event<void>(debugLabel: 'increment');
-const resetAll  = Event<void>(debugLabel: 'resetAll');
+final increment = Event<void>(debugLabel: 'increment');
+final resetAll  = Event<void>(debugLabel: 'resetAll');
 
 final counterStore = Store<int>.accum((ctx) {
   ctx.on(increment, (_) async* { yield ctx.current + 1; });

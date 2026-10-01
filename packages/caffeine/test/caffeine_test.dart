@@ -570,7 +570,7 @@ void main() {
       await Future.delayed(Duration.zero);
 
       final child = root.fork(
-        overrides: {MappingStoreOverride(from: real, to: fake)},
+        overrides: {real.overrideWith(fake)},
       );
       child.read(real); // resolves to fake, initializes fake in child scope
       fakeInc(child); // fake: 0→1
@@ -601,7 +601,7 @@ void main() {
       });
 
       final scope = Scope(
-        overrides: {MappingStoreOverride(from: real, to: fake)},
+        overrides: {real.overrideWith(fake)},
       );
       scope.read(real); // resolves to fake — only fake is initialized
       sharedInc(scope); // fires fake

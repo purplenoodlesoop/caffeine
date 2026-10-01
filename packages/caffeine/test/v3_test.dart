@@ -180,7 +180,7 @@ void main() {
 
   group('Debug labels', () {
     test('Event toString uses debugLabel', () {
-      const e = Event<int>(debugLabel: 'add');
+      final e = Event<int>(debugLabel: 'add');
       expect(e.toString(), contains('add'));
     });
 

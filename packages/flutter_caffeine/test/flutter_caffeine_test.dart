@@ -503,7 +503,7 @@ void main() {
       final fake = makeCounter();
 
       final scope = Scope(
-        overrides: {MappingStoreOverride(from: real, to: fake)},
+        overrides: {real.overrideWith(fake)},
       );
 
       scope.read(real); // initialize (resolves to fake)
@@ -534,7 +534,7 @@ void main() {
       await Future.microtask(() {});
 
       final child = parent.fork(
-        overrides: {MappingStoreOverride(from: real, to: fake)},
+        overrides: {real.overrideWith(fake)},
       );
       child.read(real); // initialize fake (resolved via override) in child
       child.fire(fakeInc, null); // fake = 1
@@ -567,7 +567,7 @@ void main() {
       final fake = makeCounter();
 
       final scope = Scope(
-        overrides: {MappingStoreOverride(from: real, to: fake)},
+        overrides: {real.overrideWith(fake)},
       );
 
       await tester.pumpWidget(Caffeine(
