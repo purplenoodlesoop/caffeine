@@ -83,8 +83,75 @@ class _HandlerInfo {
   final List<({Completer<void> done, void Function() start})> queue = [];
 }
 
+// The moment one `fire` happens. Every handler it starts sees the other stores
+// as they were when it fired: their first yields are held here and applied
+// together once all of them have started, so which store was created first
+// never decides what another store reads.
+class _Moment {
+  bool _open = true;
+  final List<_AccumEntry> _held = [];
+
+  bool get isOpen => _open;
+
+  void hold<S>(_AccumEntry<S> entry, S value) {
+    if (!entry.holding) _held.add(entry);
+    entry
+      ..held = value
+      ..holding = true
+      ..heldBy = this;
+  }
+
+  // Applies one store's held value early, as when that store fires an event of
+  // its own: what follows from its change must see the change.
+  void release(_AccumEntry entry) {
+    if (!entry.holding) return;
+    _held.remove(entry);
+    entry.releaseHeld();
+  }
+
+  void close() {
+    if (!_open) return;
+    _open = false;
+    final held = List.of(_held);
+    _held.clear();
+    for (final entry in held) {
+      entry.releaseHeld();
+    }
+  }
+}
+
 class _AccumEntry<S> extends _NodeEntry<S> {
   _AccumEntry(super.store, super.ownerScope);
+
+  // A value yielded during an open moment, not yet visible to other stores.
+  S? held;
+  bool holding = false;
+  _Moment? heldBy;
+
+  S get current => holding ? held as S : value as S;
+
+  void releaseHeld() {
+    if (!holding) return;
+    final next = held as S;
+    holding = false;
+    held = null;
+    heldBy = null;
+    put(next);
+  }
+
+  void put(S newState) {
+    if (node.valuesEqual(newState, value)) return;
+    value = newState;
+    // Invalidate now rather than at flush: a read in between recomputes
+    // derived stores instead of pairing the new value with stale ones.
+    invalidateDependents();
+    final root = ownerScope._root;
+    root._pending.add(this);
+    if (!root._flushScheduled) {
+      root._flushScheduled = true;
+      scheduleMicrotask(root._flushBatch);
+    }
+  }
 
   // Running handler invocations.
   final List<_Invocation> invocations = [];
@@ -138,7 +205,7 @@ class _StoreAccImpl<T> implements StoreAcc<T> {
   final Store<T> _store;
 
   @override
-  T get current => _entry.value as T;
+  T get current => _entry.current;
 
   @override
   Event<void> get dispose => _entry.disposeEvent;
@@ -169,7 +236,10 @@ class _StoreAccImpl<T> implements StoreAcc<T> {
   }
 
   @override
-  Future<void> fire<V>(Event<V> event, V value) => _scope.fire(event, value);
+  Future<void> fire<V>(Event<V> event, V value) {
+    _entry.heldBy?.release(_entry);
+    return _scope.fire(event, value);
+  }
 
   @override
   V read<V>(Store<V> node) => _scope._evaluateTyped(node);
@@ -478,12 +548,19 @@ class _ScopeImpl implements Scope {
     return _parent?._findEventOwner(event);
   }
 
-  void _localFire<T>(Event<T> event, T value, List<Future<void>> started) {
+  void _localFire<T>(
+    Event<T> event,
+    T value,
+    List<Future<void>> started, [
+    _Moment? moment,
+  ]) {
     if (_disposed) return;
     final entries = _eventIndex[event];
     if (entries != null) {
-      for (final bh in entries) {
-        started.add(_dispatchHandler(bh.store, bh.entry, bh.info, value));
+      for (final bh in List.of(entries)) {
+        started.add(
+          _dispatchHandler(bh.store, bh.entry, bh.info, value, moment),
+        );
       }
     }
     final controller = _eventListenerControllers[event];
@@ -492,11 +569,16 @@ class _ScopeImpl implements Scope {
     }
   }
 
-  void _broadcastFire<T>(Event<T> event, T value, List<Future<void>> started) {
+  void _broadcastFire<T>(
+    Event<T> event,
+    T value,
+    List<Future<void>> started,
+    _Moment moment,
+  ) {
     if (_disposed) return;
-    _localFire(event, value, started);
+    _localFire(event, value, started, moment);
     for (final child in List.of(_children)) {
-      child._broadcastFire(event, value, started);
+      child._broadcastFire(event, value, started, moment);
     }
   }
 
@@ -504,8 +586,18 @@ class _ScopeImpl implements Scope {
   Future<void> fire<T>(Event<T> event, T value) async {
     _checkNotDisposed();
     final started = <Future<void>>[];
-    (_findEventOwner(event) ?? _root)._broadcastFire(event, value, started);
+    final moment = _Moment();
+    (_findEventOwner(event) ?? _root)._broadcastFire(
+      event,
+      value,
+      started,
+      moment,
+    );
+    // Handler bodies run to their first suspension in microtasks queued by the
+    // dispatch above; this one runs after them and applies what they held.
+    scheduleMicrotask(moment.close);
     await Future.wait(started);
+    moment.close();
     // The last yields may still sit in the pending batch; settle them so the
     // caller sees propagated state and stream listeners have been notified.
     _root._flushBatch();
@@ -527,24 +619,31 @@ class _ScopeImpl implements Scope {
     Store<S> store,
     _AccumEntry<S> entry,
     _HandlerInfo info,
-    E value,
-  ) {
+    E value, [
+    _Moment? moment,
+  ]) {
     final handler = info.handler as Stream<S> Function(E);
-    Future<void> start([Completer<void>? done]) =>
-        _subscribeHandler(entry, info, handler(value), done ?? Completer());
+    Future<void> start([Completer<void>? done, _Moment? within]) =>
+        _subscribeHandler(
+          entry,
+          info,
+          handler(value),
+          done ?? Completer(),
+          within,
+        );
 
     switch (info.concurrency) {
       case Concurrency.parallel:
-        return start();
+        return start(null, moment);
       case Concurrency.drop:
         if (info.active != null) return Future.value();
-        return start();
+        return start(null, moment);
       case Concurrency.restart:
         info.active?.cancel();
         info.active = null;
-        return start();
+        return start(null, moment);
       case Concurrency.queue:
-        if (info.active == null) return start();
+        if (info.active == null) return start(null, moment);
         final done = Completer<void>();
         info.queue.add((done: done, start: () => start(done)));
         return done.future;
@@ -555,22 +654,18 @@ class _ScopeImpl implements Scope {
     _AccumEntry<S> entry,
     _HandlerInfo info,
     Stream<S> stream,
-    Completer<void> done,
-  ) {
+    Completer<void> done, [
+    _Moment? moment,
+  ]) {
     final invocation = _Invocation(done);
     invocation.sub = stream.listen(
       (newState) {
-        if (entry.node.valuesEqual(newState, entry.value)) return;
-        entry.value = newState;
-        // Invalidate now rather than at flush: a read in between recomputes
-        // derived stores instead of pairing the new value with stale ones.
-        entry.invalidateDependents();
-        final root = entry.ownerScope._root;
-        root._pending.add(entry);
-        if (!root._flushScheduled) {
-          root._flushScheduled = true;
-          scheduleMicrotask(root._flushBatch);
+        if (moment != null && moment.isOpen) {
+          moment.hold(entry, newState);
+          return;
         }
+        entry.heldBy?.release(entry);
+        entry.put(newState);
       },
       onError: Zone.current.handleUncaughtError,
       onDone: () {

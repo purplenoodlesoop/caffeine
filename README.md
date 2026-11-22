@@ -4,8 +4,8 @@ A reactive microstore ecosystem for Dart and Flutter.
 
 | Package | Description | Version |
 |---|---|---|
-| [`caffeine`](packages/caffeine) | Pure Dart reactive microstore | `^4.0.0` |
-| [`flutter_caffeine`](packages/flutter_caffeine) | Flutter bindings for caffeine | `^4.0.0` |
+| [`caffeine`](packages/caffeine) | Pure Dart reactive microstore | `^5.0.0` |
+| [`flutter_caffeine`](packages/flutter_caffeine) | Flutter bindings for caffeine | `^5.0.0` |
 
 ---
 

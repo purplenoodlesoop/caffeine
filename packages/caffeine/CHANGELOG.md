@@ -1,3 +1,8 @@
+## 5.0.0 — 2026-11-23
+
+### Breaking
+- **An event is one moment for every store that handles it.** When several stores handle the same event, each now reads the others as they were when the event fired. Before, a store read another's state before or after that store's own reaction depending on which of the two had been created first — and stores are created lazily, on first read, so the answer depended on what happened to read them first. The first yields of the handlers one `fire` starts are held until all of them have started and are then applied together. A store still sees its own yields at once through `ctx.current`; a handler that fires an event of its own applies its change first, so that event's handlers see it; after a handler's first `await`, reads see the live state. Code that relied on reading a sibling store's reaction to the same event must fire a follow-up event instead.
+
 ## 4.0.0 — 2026-11-23
 
 ### Breaking

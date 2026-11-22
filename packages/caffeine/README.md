@@ -20,6 +20,7 @@ A reactive microstore library for Dart with managed side effects. Caffeine gives
   - [Initial Effects](#initial-effects)
   - [Async Effects](#async-effects)
   - [Awaiting Events](#awaiting-events)
+  - [One Event, Several Stores](#one-event-several-stores)
 - [Derived State in Depth](#derived-state-in-depth)
   - [Dependency Tracking](#dependency-tracking)
   - [Update Compression — Diamond Problem](#update-compression--diamond-problem)
@@ -33,7 +34,7 @@ A reactive microstore library for Dart with managed side effects. Caffeine gives
 
 ```yaml
 dependencies:
-  caffeine: ^4.0.0
+  caffeine: ^5.0.0
 ```
 
 ```dart
@@ -297,6 +298,33 @@ ctx.on(submit, (_) async* {
   }
 });
 ```
+
+---
+
+### One Event, Several Stores
+
+An event is one moment. Every store that handles it sees the other stores as they were when it fired, whichever store was created first:
+
+```dart
+final closed = Event<String>();
+
+final tabs = Store<List<String>>.accum((ctx) {
+  ctx.on(closed, (id) async* {
+    yield [...ctx.current.where((t) => t != id)];
+  });
+  return ['a', 'b'];
+});
+
+final archive = Store<List<String>>.accum((ctx) {
+  ctx.on(closed, (id) async* {
+    final before = ctx.read(tabs); // ['a', 'b'], always
+    yield [...ctx.current, id];
+  });
+  return [];
+});
+```
+
+The first yields of the handlers one `fire` starts are held until all of them have started, then applied together. A store sees its own yields at once through `ctx.current`. A handler that fires an event of its own applies its change first, so the handlers of that event see it. After a handler's first `await` it sees the live state, the event included.
 
 ---
 

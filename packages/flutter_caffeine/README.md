@@ -22,8 +22,8 @@ Flutter bindings for [caffeine](https://pub.dev/packages/caffeine). Attaches rea
 
 ```yaml
 dependencies:
-  caffeine: ^4.0.0
-  flutter_caffeine: ^4.0.0
+  caffeine: ^5.0.0
+  flutter_caffeine: ^5.0.0
 ```
 
 ```dart

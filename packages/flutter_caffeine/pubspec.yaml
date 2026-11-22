@@ -3,7 +3,7 @@ description: >-
   Flutter bindings for caffeine. Attach reactive scopes to the widget tree,
   read store state with context.state(), fire events with context.fire() —
   no StreamBuilders, no dispose boilerplate.
-version: 4.0.0
+version: 5.0.0
 homepage: https://github.com/purplenoodlesoop/caffeine
 repository: https://github.com/purplenoodlesoop/caffeine
 issue_tracker: https://github.com/purplenoodlesoop/caffeine/issues
@@ -23,7 +23,7 @@ resolution: workspace
 dependencies:
   flutter:
     sdk: flutter
-  caffeine: ^4.0.0
+  caffeine: ^5.0.0
 
 dev_dependencies:
   flutter_test:

@@ -5,7 +5,7 @@
 }:
 {
   pname,
-  version ? "4.0.0",
+  version ? "5.0.0",
   src,
   packageRoot,
   builder,

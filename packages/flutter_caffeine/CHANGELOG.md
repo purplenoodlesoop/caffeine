@@ -1,3 +1,7 @@
+## 5.0.0 — 2026-11-23
+
+Aligned with caffeine 5.0.0: every store handling one event reads the others as they were when it fired, whichever was created first. See its [CHANGELOG](../caffeine/CHANGELOG.md).
+
 ## 4.0.0 — 2026-11-23
 
 Aligned with caffeine 4.0.0. See its [CHANGELOG](../caffeine/CHANGELOG.md) for the underlying API changes.
