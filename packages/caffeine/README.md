@@ -33,7 +33,7 @@ A reactive microstore library for Dart with managed side effects. Caffeine gives
 
 ```yaml
 dependencies:
-  caffeine: ^3.0.0
+  caffeine: ^4.0.0
 ```
 
 ```dart

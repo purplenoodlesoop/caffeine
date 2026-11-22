@@ -1,4 +1,4 @@
-## Unreleased
+## 4.0.0 — 2026-11-23
 
 ### Breaking
 - **`MappingStoreOverride` is created with `from.overrideWith(to)`.** The public constructor is gone: it inferred `T` as the least upper bound of both stores, so `MappingStoreOverride(from: Store<int>, to: Store<Object>)` compiled and threw a cast error on the first read. `overrideWith` fixes `T` from the receiver, so a mismatched replacement is a compile error.

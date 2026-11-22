@@ -1,3 +1,14 @@
+## 4.0.0 — 2026-11-23
+
+Aligned with caffeine 4.0.0. See its [CHANGELOG](../caffeine/CHANGELOG.md) for the underlying API changes.
+
+### Breaking
+- **Pulls in caffeine 4.0.0** — every breaking change there applies through the flutter bindings:
+  - `context.fire` returns a `Future<void>` that completes once the handlers it started have finished and their states have propagated.
+  - `MappingStoreOverride` is created with `from.overrideWith(to)`, so a replacement of the wrong type is a compile error.
+  - `Event` has no `const` constructor; declare events with `final`.
+  - Streams skip values that revert within a batch.
+
 ## 3.0.0 — 2026-05-28
 
 Aligned with caffeine 3.0.0. See its [CHANGELOG](../caffeine/CHANGELOG.md) for the underlying API changes.
